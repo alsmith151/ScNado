@@ -97,38 +97,64 @@ fn extract_barcode(sequence: &str, barcode_type: &BarcodeType, slack: &Slack) ->
     Ok(sequence[range].to_string())
 }
 
+struct BarcodeMatch {
+    barcode: String,
+    distance: usize,
+}
+
 /// Identify the best matching barcode from a list of valid barcodes using Hamming distance.
 /// Returns the best matching barcode and its Hamming distance if found, otherwise None.
 /// # Arguments
-/// * `extracted` - The extracted barcode sequence to be matched.
-/// * `valid_barcodes` - A slice of valid barcode sequences to match against.
-/// * `minimum_score` - The minimum Hamming distance score to consider a match valid.
+/// * `barcode_extracted` - The extracted barcode sequence to be matched.
+/// * `reference_barcodes` - A slice of valid barcode sequences to match against.
+/// * `n_missmatches` - The minimum Hamming distance score to consider a match valid.
 /// # Returns
 /// An Option containing a tuple of the best matching barcode and its Hamming distance, or None if no match is found.
 fn identify_best_barcode(
-    extracted: &str,
-    valid_barcodes: &[String],
+    barcode_extracted: &str,
+    barcodes_reference: &[String],
     n_missmatches: usize,
 ) -> Option<(String, usize)> {
-    let mut best_match: Option<(String, usize)> = None;
-    let mut min_distance = usize::MAX;
+    let extracted_length = barcode_extracted.len();
 
-    for valid in valid_barcodes {
-        let distance = hamming(extracted.as_bytes(), valid.as_bytes()) as usize;
-        if distance < min_distance {
-            min_distance = distance;
-            best_match = Some((valid.clone(), distance));
+    let mut best_match: Option<BarcodeMatch> = None;
+    for barcode_reference in barcodes_reference {
+        // Check if the lengths are the same, if not pad the shorter one with Ns
+        // This is a simple way to handle length differences without introducing complex alignment logic
+        let reference_length = barcode_reference.len();
+        let barcode_reference = if reference_length < extracted_length {
+            let padding = "N".repeat(extracted_length - reference_length);
+            format!("{}{}", barcode_reference, padding)
+        } else if reference_length > extracted_length {
+            let padding = "N".repeat(reference_length - extracted_length);
+            format!("{}{}", barcode_extracted, padding)
+        } else {
+            barcode_reference.clone()
+        };
+
+        let distance = hamming(barcode_extracted.as_bytes(), barcode_reference.as_bytes()) as usize;
+        if best_match.is_none() || distance < best_match.as_ref()?.distance {
+            best_match = Some(BarcodeMatch {
+                barcode: barcode_reference.clone(),
+                distance,
+            });
         }
     }
 
-    let max_score = valid_barcodes[0].len();
-    let min_score = max_score.saturating_sub(n_missmatches);
+    // Right found our best match, now check if it meets the number of missmatches criteria
+    // Get the length of the extracted barcode and the matched barcode, if they are not the same length we should not penalize
+    // For example if we extract a 9bp barcode but the reference is 8bp we should not penalize for the extra base
+    let barcode_extracted_length = barcode_extracted.len();
+    let barcode_match_length = barcodes_reference[0].len();
+    let length_diff = barcode_extracted_length.abs_diff(barcode_match_length);
+    let max_distance = n_missmatches + length_diff;
 
-    if let Some((_, distance)) = &best_match
-        && *distance > min_score {
-            return None;
-        }
-    best_match
+    let best_match = best_match?;
+    if best_match.distance > max_distance {
+        None
+    } else {
+        Some((best_match.barcode, best_match.distance))
+    }
 }
 
 /// Return a FASTQ reader and a writer based on file extensions.
@@ -218,8 +244,7 @@ pub fn run<P: AsRef<Path>>(
     info!("Loading barcodes from {:?}", barcodes.as_ref());
     let barcode_map = load_barcodes(barcodes)?;
 
-    
-    for (ii, result) in reader.records().enumerate()  {
+    for (ii, result) in reader.records().enumerate() {
         let record = result?;
         let seq = std::str::from_utf8(record.sequence())?;
         let id = record.name().to_string();
@@ -243,9 +268,9 @@ pub fn run<P: AsRef<Path>>(
             if let Some(valid_barcodes) = barcode_map.get(bc_type)
                 && let Some((best_match, distance)) =
                     identify_best_barcode(bc_seq, valid_barcodes, n_missmatches)
-                {
-                    barcodes_matched.insert(bc_type.clone(), (best_match, distance));
-                }
+            {
+                barcodes_matched.insert(bc_type.clone(), (best_match, distance));
+            }
         }
 
         // Create a new identifier with matched barcodes in the read name. Format ID:BC1-BC2-BC3-BC4
@@ -282,4 +307,136 @@ pub fn run<P: AsRef<Path>>(
         writer.write_record(&new_record)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_barcode_type_ranges() {
+        assert_eq!(get_barcode_range(&BarcodeType::BC1), 76..84);
+        assert_eq!(get_barcode_range(&BarcodeType::BC2), 38..46);
+        assert_eq!(get_barcode_range(&BarcodeType::BC3), 0..8);
+        assert_eq!(get_barcode_range(&BarcodeType::BC4), 114..119);
+    }
+
+    #[test]
+    fn test_slack_creation() {
+        let slack = Slack::new(2, 3);
+        assert_eq!(slack.left, 2);
+        assert_eq!(slack.right, 3);
+    }
+
+    #[test]
+    fn test_extract_barcode_no_slack() {
+        let sequence = "ATCGATCG" // BC3: 0..8
+            .to_owned() + &"N".repeat(30)  // padding
+            + "GCTAGCTA"  // BC2: 38..46
+            + &"N".repeat(30)  // padding
+            + "TTAATTAA"  // BC1: 76..84
+            + &"N".repeat(30)  // padding
+            + "CCGGC"; // BC4: 114..119
+
+        let slack = Slack::new(0, 0);
+
+        let bc1 = extract_barcode(&sequence, &BarcodeType::BC1, &slack).unwrap();
+        assert_eq!(bc1, "TTAATTAA");
+
+        let bc2 = extract_barcode(&sequence, &BarcodeType::BC2, &slack).unwrap();
+        assert_eq!(bc2, "GCTAGCTA");
+
+        let bc3 = extract_barcode(&sequence, &BarcodeType::BC3, &slack).unwrap();
+        assert_eq!(bc3, "ATCGATCG");
+
+        let bc4 = extract_barcode(&sequence, &BarcodeType::BC4, &slack).unwrap();
+        assert_eq!(bc4, "CCGGC");
+    }
+
+    #[test]
+    fn test_extract_barcode_with_slack() {
+        let sequence = "ATCGATCG" // BC3: 0..8
+            .to_owned()
+            + &"N".repeat(30)
+            + "GCTAGCTA"
+            + &"N".repeat(30)
+            + "TTAATTAA"
+            + &"N".repeat(30)
+            + "CCGGC";
+
+        let slack = Slack::new(1, 1);
+
+        // With slack, BC3 should include one base before and after
+        let bc3 = extract_barcode(&sequence, &BarcodeType::BC3, &slack);
+        assert!(bc3.is_err()); // Should fail because slack.left > range.start (1 > 0)
+    }
+
+    #[test]
+    fn test_identify_best_barcode_exact_match() {
+        let valid_barcodes = vec![
+            "ATCGATCG".to_string(),
+            "GCTAGCTA".to_string(),
+            "TTAATTAA".to_string(),
+        ];
+
+        let result = identify_best_barcode("ATCGATCG", &valid_barcodes, 0);
+        assert!(result.is_some());
+        let (barcode, distance) = result.unwrap();
+        assert_eq!(barcode, "ATCGATCG");
+        assert_eq!(distance, 0);
+    }
+
+    #[test]
+    fn test_identify_best_barcode_with_mismatch() {
+        let valid_barcodes = vec![
+            "ATCGATCG".to_string(),
+            "GCTAGCTA".to_string(),
+            "TTAATTAA".to_string(),
+        ];
+
+        // One mismatch: "ATCGATCG" vs "ATCGATCA"
+        let result = identify_best_barcode("ATCGATCA", &valid_barcodes, 1);
+        assert!(result.is_some());
+        let (barcode, distance) = result.unwrap();
+        assert_eq!(barcode, "ATCGATCG");
+        assert_eq!(distance, 1);
+    }
+
+    #[test]
+    fn test_identify_best_barcode_too_many_mismatches() {
+        let valid_barcodes = vec![
+            "ATCGATCG".to_string(),
+            "GCTAGCTA".to_string(),
+            "TTAATTAA".to_string(),
+        ];
+
+        let result = identify_best_barcode("ATCGANNN", &valid_barcodes, 1);
+        println!("{:?}", result);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_identify_best_barcode_no_valid_barcodes() {
+        let valid_barcodes = vec!["ATCGATCG".to_string()];
+        let result = identify_best_barcode("NNNNNNNNNN", &valid_barcodes, 0);
+        println!("{:?}", result);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_identify_best_barcode_chooses_closest() {
+        let valid_barcodes = vec![
+            "ATCGATCG".to_string(),
+            "ATCGATCA".to_string(), // 2 mismatches from test sequence
+            "TTAATTAA".to_string(),
+        ];
+
+        // "ATCGATAA" vs "ATCGATCA" = 1 mismatch (position 6: T vs C)
+        // Should match "ATCGATCA" with distance 1
+        let result = identify_best_barcode("ATCGATAA", &valid_barcodes, 2);
+        assert!(result.is_some());
+        let (barcode, distance) = result.unwrap();
+        assert_eq!(barcode, "ATCGATCA");
+        assert_eq!(distance, 1);
+    }
 }
