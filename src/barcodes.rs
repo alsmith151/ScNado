@@ -10,6 +10,12 @@ use std::hash::Hash;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
 
+// Type aliases to simplify complex types
+/// A dynamic FASTQ reader that can handle both compressed and uncompressed files
+type FastqReader = fastq::io::Reader<Box<dyn std::io::BufRead>>;
+/// A dynamic FASTQ writer that can handle both compressed and uncompressed files
+type FastqWriter = fastq::io::Writer<Box<dyn std::io::Write>>;
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 enum BarcodeType {
     BC1,
@@ -130,10 +136,7 @@ fn identify_best_barcode(
 pub fn get_reader_and_writer<P: AsRef<Path>>(
     input: P,
     output: P,
-) -> Result<(
-    fastq::io::Reader<Box<dyn std::io::BufRead>>,
-    fastq::io::Writer<Box<dyn std::io::Write>>,
-)> {
+) -> Result<(FastqReader, FastqWriter)> {
     let input_path = input.as_ref();
     let output_path = output.as_ref();
 
