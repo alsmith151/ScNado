@@ -215,16 +215,15 @@ pub fn run<P: AsRef<Path>>(
     info!("Loading barcodes from {:?}", barcodes.as_ref());
     let barcode_map = load_barcodes(barcodes)?;
 
-    let mut read_count = 0;
-    for result in reader.records() {
+    
+    for (ii, result) in reader.records().enumerate()  {
         let record = result?;
         let seq = std::str::from_utf8(record.sequence())?;
         let id = record.name().to_string();
 
-        if read_count % 1_000_000 == 0 {
-            info!("Processed {read_count} reads");
+        if ii % 1_000_000 == 0 {
+            info!("Processed {ii} reads");
         }
-        read_count += 1;
 
         let mut barcodes_found: HashMap<BarcodeType, String> = HashMap::new();
         let mut barcodes_matched: HashMap<BarcodeType, (String, usize)> = HashMap::new();
