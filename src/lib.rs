@@ -1,1 +1,1 @@
-mod barcodes;
+pub mod barcodes;

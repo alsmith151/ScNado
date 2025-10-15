@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use log::info;
 
-mod barcodes;
+use scnado::barcodes;
 
 #[derive(Parser, Debug)]
 struct FindBarcodesArgs {
