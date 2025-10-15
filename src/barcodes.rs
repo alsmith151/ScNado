@@ -118,11 +118,10 @@ fn identify_best_barcode(
     let max_score = valid_barcodes[0].len();
     let min_score = max_score.saturating_sub(n_missmatches);
 
-    if let Some((_, distance)) = &best_match {
-        if *distance > min_score {
+    if let Some((_, distance)) = &best_match
+        && *distance > min_score {
             return None;
         }
-    }
     best_match
 }
 
@@ -239,13 +238,12 @@ pub fn run<P: AsRef<Path>>(
             barcodes_found.insert(bc_type.clone(), bc);
         }
         for (bc_type, bc_seq) in &barcodes_found {
-            if let Some(valid_barcodes) = barcode_map.get(bc_type) {
-                if let Some((best_match, distance)) =
+            if let Some(valid_barcodes) = barcode_map.get(bc_type)
+                && let Some((best_match, distance)) =
                     identify_best_barcode(bc_seq, valid_barcodes, n_missmatches)
                 {
                     barcodes_matched.insert(bc_type.clone(), (best_match, distance));
                 }
-            }
         }
 
         // Create a new identifier with matched barcodes in the read name. Format ID:BC1-BC2-BC3-BC4
