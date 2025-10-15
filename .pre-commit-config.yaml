@@ -5,11 +5,11 @@
 repos:
   - repo: local
     hooks:
-      # Check code formatting with rustfmt
+      # Format code with rustfmt
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt
-        args: ['--all', '--', '--check']
+        args: ['--all']
         language: system
         types: [rust]
         pass_filenames: false

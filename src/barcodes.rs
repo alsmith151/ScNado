@@ -1,5 +1,4 @@
 use anyhow::Result;
-use bio::alignment::distance::hamming;
 use log::info;
 use noodles::fastq;
 use noodles::fastq::record::Definition;
@@ -97,11 +96,6 @@ fn extract_barcode(sequence: &str, barcode_type: &BarcodeType, slack: &Slack) ->
     Ok(sequence[range].to_string())
 }
 
-struct BarcodeMatch {
-    barcode: String,
-    distance: usize,
-}
-
 /// Identify the best matching barcode from a list of valid barcodes using Hamming distance.
 /// Returns the best matching barcode and its Hamming distance if found, otherwise None.
 /// # Arguments
@@ -110,50 +104,87 @@ struct BarcodeMatch {
 /// * `n_missmatches` - The minimum Hamming distance score to consider a match valid.
 /// # Returns
 /// An Option containing a tuple of the best matching barcode and its Hamming distance, or None if no match is found.
+/// Small helper struct (kept local to function scope) if you want to store intermediate best.
+struct BarcodeMatch {
+    idx: usize,
+    distance: usize,
+}
+
 fn identify_best_barcode(
     barcode_extracted: &str,
     barcodes_reference: &[String],
     n_missmatches: usize,
 ) -> Option<(String, usize)> {
-    let extracted_length = barcode_extracted.len();
+    if barcodes_reference.is_empty() {
+        return None;
+    }
 
-    let mut best_match: Option<BarcodeMatch> = None;
-    for barcode_reference in barcodes_reference {
-        // Check if the lengths are the same, if not pad the shorter one with Ns
-        // This is a simple way to handle length differences without introducing complex alignment logic
-        let reference_length = barcode_reference.len();
-        let barcode_reference = if reference_length < extracted_length {
-            let padding = "N".repeat(extracted_length - reference_length);
-            format!("{}{}", barcode_reference, padding)
-        } else if reference_length > extracted_length {
-            let padding = "N".repeat(reference_length - extracted_length);
-            format!("{}{}", barcode_extracted, padding)
-        } else {
-            barcode_reference.clone()
-        };
+    let extracted_bytes = barcode_extracted.as_bytes();
+    let extracted_len = extracted_bytes.len();
 
-        let distance = hamming(barcode_extracted.as_bytes(), barcode_reference.as_bytes()) as usize;
-        if best_match.is_none() || distance < best_match.as_ref()?.distance {
-            best_match = Some(BarcodeMatch {
-                barcode: barcode_reference.clone(),
-                distance,
+    // best match index into barcodes_reference + distance
+    let mut best: Option<BarcodeMatch> = None;
+
+    for (idx, ref_barcode) in barcodes_reference.iter().enumerate() {
+        let ref_bytes = ref_barcode.as_bytes();
+        let ref_len = ref_bytes.len();
+        let max_len = extracted_len.max(ref_len);
+
+        // fast prune: if we already have a perfect match, stop
+        if let Some(b) = &best
+            && b.distance == 0
+        {
+            break;
+        }
+
+        // Count mismatches, but stop early if >= current best distance
+        let mut mismatches = 0usize;
+        // compute a prune_upper bound = if we already have a best match, any candidate
+        // whose mismatches >= best.distance can be ignored. Use that to break early.
+        let prune_limit = best.as_ref().map(|b| b.distance).unwrap_or(usize::MAX);
+
+        for i in 0..max_len {
+            let a = if i < extracted_len {
+                extracted_bytes[i]
+            } else {
+                b'N'
+            };
+            let b = if i < ref_len { ref_bytes[i] } else { b'N' };
+            if a != b {
+                mismatches += 1;
+                if mismatches >= prune_limit {
+                    // no hope to beat current best, break early
+                    break;
+                }
+            }
+        }
+
+        // update best if better
+        if best.is_none() || mismatches < best.as_ref().unwrap().distance {
+            best = Some(BarcodeMatch {
+                idx,
+                distance: mismatches,
             });
+            // perfect match -> we can stop searching early
+            if mismatches == 0 {
+                break;
+            }
         }
     }
 
-    // Right found our best match, now check if it meets the number of missmatches criteria
-    // Get the length of the extracted barcode and the matched barcode, if they are not the same length we should not penalize
-    // For example if we extract a 9bp barcode but the reference is 8bp we should not penalize for the extra base
-    let barcode_extracted_length = barcode_extracted.len();
-    let barcode_match_length = barcodes_reference[0].len();
-    let length_diff = barcode_extracted_length.abs_diff(barcode_match_length);
-    let max_distance = n_missmatches + length_diff;
+    // no candidate matched (shouldn't happen because we checked empty earlier)
+    let best = best?;
 
-    let best_match = best_match?;
-    if best_match.distance > max_distance {
+    // Now check threshold using length difference to avoid penalizing for missing tails
+    let best_ref = &barcodes_reference[best.idx];
+    let length_diff = barcode_extracted.len().abs_diff(best_ref.len());
+    let max_allowed = n_missmatches + length_diff;
+
+    if best.distance > max_allowed {
         None
     } else {
-        Some((best_match.barcode, best_match.distance))
+        // clone only the chosen barcode once
+        Some((best_ref.clone(), best.distance))
     }
 }
 
@@ -244,17 +275,23 @@ pub fn run<P: AsRef<Path>>(
     info!("Loading barcodes from {:?}", barcodes.as_ref());
     let barcode_map = load_barcodes(barcodes)?;
 
+    // Pre-allocate reusable buffers outside the loop
+    let mut barcodes_found: HashMap<BarcodeType, String> = HashMap::new();
+    let mut barcodes_matched: HashMap<BarcodeType, (String, usize)> = HashMap::new();
+
     for (ii, result) in reader.records().enumerate() {
         let record = result?;
         let seq = std::str::from_utf8(record.sequence())?;
-        let id = record.name().to_string();
+        let id = std::str::from_utf8(record.name())?;
 
         if ii % 1_000_000 == 0 {
             info!("Processed {ii} reads");
         }
 
-        let mut barcodes_found: HashMap<BarcodeType, String> = HashMap::new();
-        let mut barcodes_matched: HashMap<BarcodeType, (String, usize)> = HashMap::new();
+        // Clear and reuse HashMaps
+        barcodes_found.clear();
+        barcodes_matched.clear();
+
         for bc_type in &[
             BarcodeType::BC1,
             BarcodeType::BC2,
@@ -275,30 +312,31 @@ pub fn run<P: AsRef<Path>>(
 
         // Create a new identifier with matched barcodes in the read name. Format ID:BC1-BC2-BC3-BC4
         let new_id = format!(
-            "{}__{}-{}-{}-{}",
+            "{}:{}-{}-{}-{}",
             id,
             barcodes_matched
                 .get(&BarcodeType::BC1)
-                .map(|(bc, _)| bc.as_str())
-                .unwrap_or("NNNNNNNN"),
+                .map(|(bc, score)| format!("{bc}_{score}"))
+                .unwrap_or_else(|| String::from("NNNNNNNN")),
             barcodes_matched
                 .get(&BarcodeType::BC2)
-                .map(|(bc, _)| bc.as_str())
-                .unwrap_or("NNNNNNNN"),
+                .map(|(bc, score)| format!("{bc}_{score}"))
+                .unwrap_or_else(|| String::from("NNNNNNNN")),
             barcodes_matched
                 .get(&BarcodeType::BC3)
-                .map(|(bc, _)| bc.as_str())
-                .unwrap_or("NNNNNNNN"),
+                .map(|(bc, score)| format!("{bc}_{score}"))
+                .unwrap_or_else(|| String::from("NNNNNNNN")),
             barcodes_matched
                 .get(&BarcodeType::BC4)
-                .map(|(bc, _)| bc.as_str())
-                .unwrap_or("NNNNN"),
+                .map(|(bc, score)| format!("{bc}_{score}"))
+                .unwrap_or_else(|| String::from("NNNNN")),
         );
 
         // Trim the sequence to remove barcodes
         // We have ~138 bp of barcodes on the 5' end of the read so just remove the first 138 bp
         let trimmed_seq = &seq[138..];
         let quality_scores = &record.quality_scores()[138..];
+
         let new_record = fastq::Record::new(
             Definition::new(new_id, record.description()),
             trimmed_seq,
