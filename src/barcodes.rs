@@ -7,7 +7,7 @@ use polars::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufReader, BufWriter};
 use std::path::Path;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]

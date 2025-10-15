@@ -1,2 +1,14 @@
 /target
 .gitignore
+barcodes/barcode_primers.tsv
+barcodes/barcodes_extracted.tsv
+barcodes/extract_barcode_sequences.ipynb
+reference/create_reference.ipynb
+reference/model_sequence.txt
+reference/reference_sequences.fa
+Cargo.lock
+cell-lines-11x-RNA_R1_001.fastq.gz
+cell-lines-11x-RNA_R2_001.fastq.gz
+rna_mapping_r2.bam
+rna_mapping.paf
+test.fq.gz

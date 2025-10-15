@@ -1,4 +1,3 @@
-use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use log::info;
 
