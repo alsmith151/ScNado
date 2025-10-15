@@ -117,6 +117,43 @@ cargo test
 cargo build --release
 ```
 
+### Pre-commit Hooks
+
+This project uses [pre-commit](https://pre-commit.com/) to automatically check code formatting and linting before commits.
+
+#### Setup
+
+1. Install pre-commit:
+```bash
+pip install pre-commit
+# or
+brew install pre-commit
+```
+
+2. Install the git hooks:
+```bash
+pre-commit install
+```
+
+#### What it checks
+
+- **cargo fmt**: Ensures code is properly formatted
+- **cargo clippy**: Runs the linter to catch common mistakes
+
+#### Manual checks
+
+Run the checks manually without committing:
+```bash
+pre-commit run --all-files
+```
+
+#### Skipping hooks
+
+If you need to skip the hooks for a specific commit:
+```bash
+git commit --no-verify
+```
+
 ## License
 
 [Add your license here]

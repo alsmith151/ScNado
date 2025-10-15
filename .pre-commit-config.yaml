@@ -1,0 +1,33 @@
+# Pre-commit hooks for Rust projects
+# Install pre-commit: pip install pre-commit
+# Then run: pre-commit install
+
+repos:
+  - repo: local
+    hooks:
+      # Check code formatting with rustfmt
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt
+        args: ['--all', '--', '--check']
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # Run clippy for linting
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy
+        args: ['--all-targets', '--all-features', '--', '-D', 'warnings']
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # Optional: Run tests
+      # Uncomment if you want to run tests before each commit
+      # - id: cargo-test
+      #   name: cargo test
+      #   entry: cargo test
+      #   language: system
+      #   types: [rust]
+      #   pass_filenames: false
