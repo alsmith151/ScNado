@@ -3,12 +3,15 @@ use log::info;
 
 mod barcodes;
 
-
 #[derive(Parser, Debug)]
 struct FindBarcodesArgs {
     #[arg(short, long, help = "Input FASTQ file")]
     input: String,
-    #[arg(short, long, help = "Barcode file. CSV file with columns 'barcode_type' and 'barcode_sequence'")]
+    #[arg(
+        short,
+        long,
+        help = "Barcode file. CSV file with columns 'barcode_type' and 'barcode_sequence'"
+    )]
     barcodes: String,
     #[arg(short, long, help = "Output file")]
     output: String,
@@ -16,10 +19,14 @@ struct FindBarcodesArgs {
     slack_left: Option<usize>,
     #[arg(long, help = "Slack right", default_value = "0")]
     slack_right: Option<usize>,
-    #[arg(short, long, help = "Number of allowed mismatches", default_value = "0")]
+    #[arg(
+        short,
+        long,
+        help = "Number of allowed mismatches",
+        default_value = "0"
+    )]
     n_missmatches: Option<usize>,
 }
-
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -36,8 +43,7 @@ struct Cli {
 enum Commands {
     /// Find barcodes in FASTQ file
     FindBarcodes(FindBarcodesArgs),
-}   
-
+}
 
 fn main() {
     colog::init();
@@ -47,10 +53,8 @@ fn main() {
 
     match &cli.command {
         Commands::FindBarcodes(args) => {
-            let slack = barcodes::Slack::new(
-                args.slack_left.unwrap_or(0),
-                args.slack_right.unwrap_or(0),
-            );
+            let slack =
+                barcodes::Slack::new(args.slack_left.unwrap_or(0), args.slack_right.unwrap_or(0));
             info!("Finding barcodes in {}", args.input);
             if let Err(e) = barcodes::run(
                 &args.input,
@@ -64,11 +68,4 @@ fn main() {
             }
         }
     }
-    
-
-
-
-
-    
-
 }

@@ -91,8 +91,6 @@ fn extract_barcode(sequence: &str, barcode_type: &BarcodeType, slack: &Slack) ->
     Ok(sequence[range].to_string())
 }
 
-
-
 /// Identify the best matching barcode from a list of valid barcodes using Hamming distance.
 /// Returns the best matching barcode and its Hamming distance if found, otherwise None.
 /// # Arguments
@@ -128,8 +126,6 @@ fn identify_best_barcode(
     best_match
 }
 
-
-
 /// Return a FASTQ reader and a writer based on file extensions.
 /// Supports uncompressed `.fastq` / `.fq` and gzipped `.gz`.
 pub fn get_reader_and_writer<P: AsRef<Path>>(
@@ -159,7 +155,10 @@ pub fn get_reader_and_writer<P: AsRef<Path>>(
             Box::new(BufReader::new(file))
         }
         Some(ext) => {
-            return Err(anyhow::anyhow!("Unsupported input file extension: {:?}", ext));
+            return Err(anyhow::anyhow!(
+                "Unsupported input file extension: {:?}",
+                ext
+            ));
         }
         None => return Err(anyhow::anyhow!("Input file has no extension")),
     };
@@ -182,7 +181,10 @@ pub fn get_reader_and_writer<P: AsRef<Path>>(
             Box::new(BufWriter::new(file))
         }
         Some(ext) => {
-            return Err(anyhow::anyhow!("Unsupported output file extension: {:?}", ext));
+            return Err(anyhow::anyhow!(
+                "Unsupported output file extension: {:?}",
+                ext
+            ));
         }
         None => return Err(anyhow::anyhow!("Output file has no extension")),
     };
@@ -191,10 +193,6 @@ pub fn get_reader_and_writer<P: AsRef<Path>>(
 
     Ok((reader, writer))
 }
-
-
-
-
 
 /// Main function to process FASTQ file, extract barcodes, and write results to output file.
 /// # Arguments
@@ -212,7 +210,6 @@ pub fn run<P: AsRef<Path>>(
 ) -> Result<()> {
     let slack = slack.unwrap_or(Slack { left: 0, right: 0 });
     let n_missmatches = n_missmatches.unwrap_or(0);
-
 
     let (mut reader, mut writer) = get_reader_and_writer(path, outfile)?;
 
@@ -273,14 +270,16 @@ pub fn run<P: AsRef<Path>>(
                 .unwrap_or("NNNNN"),
         );
 
-
         // Trim the sequence to remove barcodes
         // We have ~138 bp of barcodes on the 5' end of the read so just remove the first 138 bp
         let trimmed_seq = &seq[138..];
         let quality_scores = &record.quality_scores()[138..];
-        let new_record = fastq::Record::new(Definition::new(new_id, record.description()), trimmed_seq, quality_scores);
+        let new_record = fastq::Record::new(
+            Definition::new(new_id, record.description()),
+            trimmed_seq,
+            quality_scores,
+        );
         writer.write_record(&new_record)?;
-
     }
     Ok(())
 }
