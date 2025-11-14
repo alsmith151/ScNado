@@ -12,3 +12,4 @@ cell-lines-11x-RNA_R2_001.fastq.gz
 rna_mapping_r2.bam
 rna_mapping.paf
 test.fq.gz
+.DS_Store
