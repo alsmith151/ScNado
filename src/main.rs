@@ -23,6 +23,16 @@ struct FindBarcodesArgs {
         default_value = "0"
     )]
     n_missmatches: Option<usize>,
+
+    #[arg(
+        long,
+        help = "Allow 'N' characters in barcode matching",
+        default_value_t = false
+    )]
+    enable_n_matching: bool,
+
+    #[arg(long, help = "Allow missing barcodes", default_value_t = false)]
+    allow_missing_barcodes: bool,
 }
 
 #[derive(Parser)]
@@ -55,7 +65,9 @@ fn main() {
                 &args.input_r2,
                 &args.barcodes,
                 args.output.clone(),
-                args.n_missmatches,
+                args.n_missmatches.unwrap_or(0),
+                args.enable_n_matching,
+                args.allow_missing_barcodes,
             ) {
                 eprintln!("Error: {:?}", e);
                 std::process::exit(1);

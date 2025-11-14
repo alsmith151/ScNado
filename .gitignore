@@ -19,3 +19,17 @@ fastq_files/cat_fastq/fastq/SEM-MYB-FKBP-sublib-1-H3K27ac_R2.fastq.gz
 fastq_files/cat_fastq/fastq/SEM-MYB-FKBP-sublib-2-H3K27ac_R1.fastq.gz
 fastq_files/rna_fastq/fastq/.SEM-MYB-FKBP-sublib-1_R2.fastq.gz.RsmT6OBLUV
 fastq_files/rna_fastq/fastq/SEM-MYB-FKBP-sublib-1_R1.fastq.gz
+aligned/cat_sublib1_paired_sorted.bam
+aligned/cat_sublib1_paired_sorted.bam.bai
+aligned/cat_sublib1_paired_sorted.bam.tdf
+aligned/cat_sublib1_paired.bam
+aligned/cat_sublib1_sorted.bam
+aligned/cat_sublib1_sorted.bam.bai
+aligned/cat_sublib1_sorted.bam.tdf
+aligned/cat_sublib1.bam
+fastq_files/cat_fastq/fastq/SEM-MYB-FKBP-sublib-1-H3K27ac_R2_fastqc.html
+fastq_files/cat_fastq/fastq/SEM-MYB-FKBP-sublib-1-H3K27ac_R2_fastqc.zip
+fastq_files/cat_fastq/fastq/SEM-MYB-FKBP-sublib-2-H3K27ac_R2.fastq.gz
+fastq_files/rna_fastq/fastq/SEM-MYB-FKBP-sublib-1_R2.fastq.gz
+fastq_files/rna_fastq/fastq/SEM-MYB-FKBP-sublib-2_R1.fastq.gz
+fastq_files/rna_fastq/fastq/SEM-MYB-FKBP-sublib-2_R2.fastq.gz
