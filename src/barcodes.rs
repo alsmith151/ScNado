@@ -23,24 +23,40 @@ enum BarcodeType {
     BC4,
 }
 
-pub struct Slack {
-    left: usize,
-    right: usize,
-}
-
-impl Slack {
-    pub fn new(left: usize, right: usize) -> Self {
-        Slack { left, right }
-    }
-}
-
-fn get_barcode_range(barcode_type: &BarcodeType) -> std::ops::Range<usize> {
+fn fetch_default_barcode_ranges(barcode_type: &BarcodeType) -> std::ops::Range<usize> {
     match barcode_type {
         BarcodeType::BC1 => 76..84,
         BarcodeType::BC2 => 38..46,
         BarcodeType::BC3 => 0..8,
         BarcodeType::BC4 => 114..119,
     }
+}
+
+#[derive(Debug)]
+struct SplitPoolBarcodes {
+    barcode_type: BarcodeType,
+    barcode_sequences: Vec<String>,
+    barcode_range: std::ops::Range<usize>,
+}
+impl SplitPoolBarcodes {
+    pub fn new(
+        barcode_type: BarcodeType,
+        barcode_sequences: Vec<String>,
+        barcode_range: std::ops::Range<usize>,
+    ) -> Self {
+        SplitPoolBarcodes {
+            barcode_type,
+            barcode_sequences,
+            barcode_range,
+        }
+    }
+}
+
+struct Barcodes {
+    bc1: SplitPoolBarcodes,
+    bc2: SplitPoolBarcodes,
+    bc3: SplitPoolBarcodes,
+    bc4: SplitPoolBarcodes,
 }
 
 fn load_barcodes<P: AsRef<Path>>(path: P) -> Result<HashMap<BarcodeType, Vec<String>>> {
@@ -85,14 +101,13 @@ fn load_barcodes<P: AsRef<Path>>(path: P) -> Result<HashMap<BarcodeType, Vec<Str
     Ok(barcode_map)
 }
 
-fn extract_barcode(sequence: &str, barcode_type: &BarcodeType, slack: &Slack) -> Result<String> {
-    let mut range = get_barcode_range(barcode_type);
+fn extract_barcode(sequence: &str, barcode_type: &BarcodeType) -> Result<String> {
+    let range = fetch_default_barcode_ranges(barcode_type);
 
-    if slack.left > range.start || range.end + slack.right > sequence.len() {
-        return Err(anyhow::anyhow!("Barcode range with slack is out of bounds"));
+    if range.end > sequence.len() {
+        return Err(anyhow::anyhow!("Barcode range is out of bounds"));
     };
-    range.start -= slack.left;
-    range.end += slack.right;
+
     Ok(sequence[range].to_string())
 }
 
@@ -190,9 +205,9 @@ fn identify_best_barcode(
 
 /// Return a FASTQ reader and a writer based on file extensions.
 /// Supports uncompressed `.fastq` / `.fq` and gzipped `.gz`.
-pub fn get_reader_and_writer<P: AsRef<Path>>(
-    input: P,
-    output: P,
+pub fn get_reader_and_writer<P1: AsRef<Path>, P2: AsRef<Path>>(
+    input: P1,
+    output: P2,
 ) -> Result<(FastqReader, FastqWriter)> {
     let input_path = input.as_ref();
     let output_path = output.as_ref();
@@ -261,16 +276,18 @@ pub fn get_reader_and_writer<P: AsRef<Path>>(
 /// * `slack` - Optional slack values for barcode extraction.
 /// * `minimum_score` - Optional minimum Hamming distance score for barcode matching.
 pub fn run<P: AsRef<Path>>(
-    path: P,
+    read1: P,
+    read2: P,
     barcodes: P,
-    outfile: P,
-    slack: Option<Slack>,
+    output_prefix: String,
     n_missmatches: Option<usize>,
 ) -> Result<()> {
-    let slack = slack.unwrap_or(Slack { left: 0, right: 0 });
     let n_missmatches = n_missmatches.unwrap_or(0);
 
-    let (mut reader, mut writer) = get_reader_and_writer(path, outfile)?;
+    let output_r1 = format!("{output_prefix}_R1.fastq.gz");
+    let output_r2 = format!("{output_prefix}_R2.fastq.gz");
+    let (mut reader_r1, mut writer_r1) = get_reader_and_writer(read1, output_r1)?;
+    let (mut reader_r2, mut writer_r2) = get_reader_and_writer(read2, output_r2)?;
 
     info!("Loading barcodes from {:?}", barcodes.as_ref());
     let barcode_map = load_barcodes(barcodes)?;
@@ -279,10 +296,12 @@ pub fn run<P: AsRef<Path>>(
     let mut barcodes_found: HashMap<BarcodeType, String> = HashMap::new();
     let mut barcodes_matched: HashMap<BarcodeType, (String, usize)> = HashMap::new();
 
-    for (ii, result) in reader.records().enumerate() {
-        let record = result?;
-        let seq = std::str::from_utf8(record.sequence())?;
-        let id = std::str::from_utf8(record.name())?;
+    for (ii, (result_r1, result_r2)) in reader_r1.records().zip(reader_r2.records()).enumerate() {
+        let record_r1 = result_r1?;
+        let record_r2 = result_r2?;
+        let seq_r2 = std::str::from_utf8(record_r2.sequence())?;
+        let id_r1 = std::str::from_utf8(record_r1.name())?;
+        let id_r2 = std::str::from_utf8(record_r2.name())?;
 
         if ii % 1_000_000 == 0 {
             info!("Processed {ii} reads");
@@ -298,7 +317,7 @@ pub fn run<P: AsRef<Path>>(
             BarcodeType::BC3,
             BarcodeType::BC4,
         ] {
-            let bc = extract_barcode(seq, bc_type, &slack)?;
+            let bc = extract_barcode(seq_r2, bc_type)?;
             barcodes_found.insert(bc_type.clone(), bc);
         }
         for (bc_type, bc_seq) in &barcodes_found {
@@ -311,9 +330,9 @@ pub fn run<P: AsRef<Path>>(
         }
 
         // Create a new identifier with matched barcodes in the read name. Format ID:BC1-BC2-BC3-BC4
-        let new_id = format!(
+        let new_id_for_r2 = format!(
             "{}:{}-{}-{}-{}",
-            id,
+            id_r2,
             barcodes_matched
                 .get(&BarcodeType::BC1)
                 .map(|(bc, score)| format!("{bc}_{score}"))
@@ -332,17 +351,26 @@ pub fn run<P: AsRef<Path>>(
                 .unwrap_or_else(|| String::from("NNNNN")),
         );
 
+        let new_id_for_r1 = new_id_for_r2.clone().replace(id_r2, id_r1);
+
         // Trim the sequence to remove barcodes
         // We have ~138 bp of barcodes on the 5' end of the read so just remove the first 138 bp
-        let trimmed_seq = &seq[138..];
-        let quality_scores = &record.quality_scores()[138..];
+        let r2_trimmed_seq = &seq_r2[138..];
+        let quality_scores = &record_r2.quality_scores()[138..];
 
-        let new_record = fastq::Record::new(
-            Definition::new(new_id, record.description()),
-            trimmed_seq,
+        let r1_record = fastq::Record::new(
+            Definition::new(new_id_for_r1, record_r1.description()),
+            record_r1.sequence(),
+            record_r1.quality_scores(),
+        );
+        let r2_record = fastq::Record::new(
+            Definition::new(new_id_for_r2, record_r2.description()),
+            r2_trimmed_seq,
             quality_scores,
         );
-        writer.write_record(&new_record)?;
+
+        writer_r1.write_record(&r1_record)?;
+        writer_r2.write_record(&r2_record)?;
     }
     Ok(())
 }
@@ -353,17 +381,10 @@ mod tests {
 
     #[test]
     fn test_barcode_type_ranges() {
-        assert_eq!(get_barcode_range(&BarcodeType::BC1), 76..84);
-        assert_eq!(get_barcode_range(&BarcodeType::BC2), 38..46);
-        assert_eq!(get_barcode_range(&BarcodeType::BC3), 0..8);
-        assert_eq!(get_barcode_range(&BarcodeType::BC4), 114..119);
-    }
-
-    #[test]
-    fn test_slack_creation() {
-        let slack = Slack::new(2, 3);
-        assert_eq!(slack.left, 2);
-        assert_eq!(slack.right, 3);
+        assert_eq!(fetch_default_barcode_ranges(&BarcodeType::BC1), 76..84);
+        assert_eq!(fetch_default_barcode_ranges(&BarcodeType::BC2), 38..46);
+        assert_eq!(fetch_default_barcode_ranges(&BarcodeType::BC3), 0..8);
+        assert_eq!(fetch_default_barcode_ranges(&BarcodeType::BC4), 114..119);
     }
 
     #[test]
@@ -376,37 +397,17 @@ mod tests {
             + &"N".repeat(30)  // padding
             + "CCGGC"; // BC4: 114..119
 
-        let slack = Slack::new(0, 0);
-
-        let bc1 = extract_barcode(&sequence, &BarcodeType::BC1, &slack).unwrap();
+        let bc1 = extract_barcode(&sequence, &BarcodeType::BC1).unwrap();
         assert_eq!(bc1, "TTAATTAA");
 
-        let bc2 = extract_barcode(&sequence, &BarcodeType::BC2, &slack).unwrap();
+        let bc2 = extract_barcode(&sequence, &BarcodeType::BC2).unwrap();
         assert_eq!(bc2, "GCTAGCTA");
 
-        let bc3 = extract_barcode(&sequence, &BarcodeType::BC3, &slack).unwrap();
+        let bc3 = extract_barcode(&sequence, &BarcodeType::BC3).unwrap();
         assert_eq!(bc3, "ATCGATCG");
 
-        let bc4 = extract_barcode(&sequence, &BarcodeType::BC4, &slack).unwrap();
+        let bc4 = extract_barcode(&sequence, &BarcodeType::BC4).unwrap();
         assert_eq!(bc4, "CCGGC");
-    }
-
-    #[test]
-    fn test_extract_barcode_with_slack() {
-        let sequence = "ATCGATCG" // BC3: 0..8
-            .to_owned()
-            + &"N".repeat(30)
-            + "GCTAGCTA"
-            + &"N".repeat(30)
-            + "TTAATTAA"
-            + &"N".repeat(30)
-            + "CCGGC";
-
-        let slack = Slack::new(1, 1);
-
-        // With slack, BC3 should include one base before and after
-        let bc3 = extract_barcode(&sequence, &BarcodeType::BC3, &slack);
-        assert!(bc3.is_err()); // Should fail because slack.left > range.start (1 > 0)
     }
 
     #[test]

@@ -1,24 +1,21 @@
 use clap::{Parser, Subcommand};
-use log::info;
+// use log::info;
 
 use scnado::barcodes;
 
 #[derive(Parser, Debug)]
 struct FindBarcodesArgs {
-    #[arg(short, long, help = "Input FASTQ file")]
-    input: String,
+    #[arg(long, help = "Input FASTQ file")]
+    input_r1: String,
+    #[arg(long, help = "Input FASTQ file (R2)")]
+    input_r2: String,
     #[arg(
-        short,
         long,
         help = "Barcode file. CSV file with columns 'barcode_type' and 'barcode_sequence'"
     )]
     barcodes: String,
-    #[arg(short, long, help = "Output file")]
+    #[arg(short, long, help = "Output FASTQ file prefix")]
     output: String,
-    #[arg(long, help = "Slack left", default_value = "0")]
-    slack_left: Option<usize>,
-    #[arg(long, help = "Slack right", default_value = "0")]
-    slack_right: Option<usize>,
     #[arg(
         short,
         long,
@@ -53,14 +50,11 @@ fn main() {
 
     match &cli.command {
         Commands::FindBarcodes(args) => {
-            let slack =
-                barcodes::Slack::new(args.slack_left.unwrap_or(0), args.slack_right.unwrap_or(0));
-            info!("Finding barcodes in {}", args.input);
             if let Err(e) = barcodes::run(
-                &args.input,
+                &args.input_r1,
+                &args.input_r2,
                 &args.barcodes,
-                &args.output,
-                Some(slack),
+                args.output.clone(),
                 args.n_missmatches,
             ) {
                 eprintln!("Error: {:?}", e);

@@ -13,3 +13,9 @@ rna_mapping_r2.bam
 rna_mapping.paf
 test.fq.gz
 .DS_Store
+fastq_files/cat_fastq/fastq/.SEM-MYB-FKBP-sublib-2-H3K27ac_R2.fastq.gz.58XRncDm99
+fastq_files/cat_fastq/fastq/SEM-MYB-FKBP-sublib-1-H3K27ac_R1.fastq.gz
+fastq_files/cat_fastq/fastq/SEM-MYB-FKBP-sublib-1-H3K27ac_R2.fastq.gz
+fastq_files/cat_fastq/fastq/SEM-MYB-FKBP-sublib-2-H3K27ac_R1.fastq.gz
+fastq_files/rna_fastq/fastq/.SEM-MYB-FKBP-sublib-1_R2.fastq.gz.RsmT6OBLUV
+fastq_files/rna_fastq/fastq/SEM-MYB-FKBP-sublib-1_R1.fastq.gz
