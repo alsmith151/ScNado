@@ -14,7 +14,7 @@ gtf_file: "reference/hg38.gtf"
 
 # Containers
 # Replace <username> with the actual GitHub username
-scnado_container: "docker://ghcr.io/<username>/scnado:latest"
+scnado_container: "docker://ghcr.io/alsmith151/scnado:latest"
 
 # Tool parameters
 cat_bin_size: 5000
