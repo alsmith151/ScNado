@@ -1,0 +1,28 @@
+# Git
+.git
+.github
+.gitignore
+
+# Rust
+target/
+
+# Python
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data and intermediate files
+initial_workflow/
+barcodes/
+**/fastq_files/
+**/fragments/
+**/coverage_bigwigs/
+
+# OS specific
+.DS_Store
