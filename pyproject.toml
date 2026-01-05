@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "scnado"
+version = "0.1.0"
+description = "A pipeline for processing CUT&TAG and RNA data"
+requires-python = ">=3.11"
+dependencies = [
+    "snapatac2>=2.8.0",
+    "scanpy>=1.9.0",
+    "muon>=0.1.5",
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "seaborn",
+    "mudata",
+]
+
+[project.scripts]
+scnado-py = "scnado.cli:main"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "scnado._scnado"
+python-source = "python"

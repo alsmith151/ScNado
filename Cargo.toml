@@ -3,7 +3,12 @@ name = "scnado"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "_scnado"
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+pyo3 = { version = "0.23.0", features = ["extension-module"] }
 ahash = "0.8.12"
 anyhow = "1.0.98"
 bio = "3.0.0"
@@ -26,3 +31,4 @@ env_logger = "0.11.8"
 flate2 = {version = "1.1.5"}
 crossbeam-channel = "0.5.15"
 num_cpus = "1.17"
+regex = "1.12.2"

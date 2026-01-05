@@ -1,167 +1,95 @@
 # ScNado
 
-ScNado is a high-performance tool for barcode detection and processing in single-cell sequencing data.
+ScNado is a high-performance pipeline for processing single-cell CUT&TAG (CAT) and RNA-seq data. It combines a fast Rust-based barcode detection engine with a Python-based analysis suite and a containerized Snakemake workflow.
 
 ## Features
 
-- Fast barcode detection in FASTQ files
-- Support for mismatches and slack regions
-- Multi-threaded processing with Rayon
-- Gzip compression support
+- **Fast Barcode Detection**: Rust-based engine for high-throughput barcode matching and UMI extraction.
+- **Mixed-Language Package**: Seamless integration of Rust performance and Python's single-cell ecosystem (Scanpy, SnapATAC2, Muon).
+- **Containerized Workflow**: Snakemake pipeline with full support for Docker/Singularity and GitHub Container Registry (GHCR).
+- **Multi-modal Integration**: Built-in support for linking CAT and RNA data using `muon` (MuData).
+
+## Project Structure
+
+- [python/scnado/](python/scnado/): Python package for single-cell analysis.
+- [src/](src/): Rust source code for the `scnado` CLI.
+- [workflow/](workflow/): Snakemake workflow and scripts.
+- [config/](config/): Configuration files and sample sheets.
+- [initial_workflow/](initial_workflow/): Original prototype notebooks and scripts.
 
 ## Installation
 
-### Pre-built Binaries
+### Python Package (Mixed Rust/Python)
 
-Download the latest pre-built binaries from the [Releases](https://github.com/alsmith151/ScNado/releases) page:
-
-- **macOS**: `scnado-macos-latest`
-- **Ubuntu/Linux**: `scnado-ubuntu-latest`
-
-After downloading, make the binary executable and optionally move it to your PATH:
+The package is built using `maturin`. To install it locally:
 
 ```bash
-chmod +x scnado-*
-sudo mv scnado-* /usr/local/bin/scnado
+pip install .
 ```
 
-### Building from Source
+This will compile the Rust components and install the `scnado` CLI and `scnado` Python module. The package includes default barcode reference files which can be accessed via:
 
-#### Prerequisites
-
-- Rust 1.70 or later (install from [rustup.rs](https://rustup.rs/))
-
-#### Build Instructions
-
-1. Clone the repository:
-```bash
-git clone https://github.com/alsmith151/ScNado.git
-cd ScNado
+```python
+import scnado
+barcode_path = scnado.get_barcode_csv()
 ```
 
-2. Build the project:
-```bash
-cargo build --release
-```
+### Docker
 
-3. The binary will be available at `target/release/scnado`
+The project is containerized and available via GitHub Container Registry:
 
-4. Optionally, install it to your PATH:
 ```bash
-cargo install --path .
+docker pull ghcr.io/<username>/scnado:latest
 ```
 
 ## Usage
 
-### Find Barcodes
+### Snakemake Pipeline
 
-Detect barcodes in FASTQ files:
+The primary way to run the pipeline is via Snakemake.
+
+1. **Configure the pipeline**:
+   Edit [config/config.yaml](config/config.yaml) to set your reference paths and parameters.
+   Update [config/samples.tsv](config/samples.tsv) with your sample metadata and FASTQ paths.
+
+2. **Run the pipeline**:
+   ```bash
+   snakemake --use-conda --use-singularity --cores 8
+   ```
+
+### Rust CLI
+
+The `scnado` binary provides low-level tools for barcode processing:
 
 ```bash
+# Find barcodes and extract UMIs
 scnado find-barcodes \
-  -i input.fastq.gz \
-  -b barcodes.csv \
-  -o output.fastq.gz \
-  --n-missmatches 1
-```
+  --r1 input_R1.fastq.gz \
+  --r2 input_R2.fastq.gz \
+  --barcodes barcodes.csv \
+  --output-prefix results/barcoded/sample1
 
-#### Options
-
-- `-i, --input <FILE>`: Input FASTQ file (supports gzip compression)
-- `-b, --barcodes <FILE>`: CSV file with columns 'barcode_type' and 'barcode_sequence'
-- `-o, --output <FILE>`: Output FASTQ file
-- `--slack-left <NUM>`: Number of bases to allow slack on the left (default: 0)
-- `--slack-right <NUM>`: Number of bases to allow slack on the right (default: 0)
-- `-n, --n-missmatches <NUM>`: Number of allowed mismatches (default: 0)
-- `-v, --verbose <LEVEL>`: Verbosity level (default: 2)
-
-#### Barcode File Format
-
-The barcode file should be a CSV file with the following columns:
-
-```csv
-barcode_type,barcode_sequence
-barcode1,ATCGATCG
-barcode2,GCTAGCTA
-```
-
-## Examples
-
-### Basic barcode detection
-```bash
-scnado find-barcodes -i input.fastq.gz -b barcodes.csv -o output.fastq.gz
-```
-
-### Allow up to 2 mismatches
-```bash
-scnado find-barcodes -i input.fastq.gz -b barcodes.csv -o output.fastq.gz --n-missmatches 2
-```
-
-### With slack regions
-```bash
-scnado find-barcodes -i input.fastq.gz -b barcodes.csv -o output.fastq.gz \
-  --slack-left 2 --slack-right 2 --n-missmatches 1
+# Generate fragments from BAM
+scnado fragments \
+  --bam aligned.bam \
+  --output fragments.tsv.gz \
+  --barcode-regex '^[^|]+\|(?P<barcode>[ACGT-]+)$'
 ```
 
 ## Development
 
-### Running Tests
+### Prerequisites
+
+- Rust 1.83+
+- Python 3.11+
+- Maturin
+
+### Building from Source
 
 ```bash
-cargo test
-```
-
-### Building for Release
-
-```bash
-cargo build --release
-```
-
-### Pre-commit Hooks
-
-This project uses [pre-commit](https://pre-commit.com/) to automatically check code formatting and linting before commits.
-
-#### Setup
-
-1. Install pre-commit:
-```bash
-pip install pre-commit
-# or
-brew install pre-commit
-```
-
-2. Install the git hooks:
-```bash
-pre-commit install
-```
-
-#### What it checks
-
-- **cargo fmt**: Ensures code is properly formatted
-- **cargo clippy**: Runs the linter to catch common mistakes
-
-#### Manual checks
-
-Run the checks manually without committing:
-```bash
-pre-commit run --all-files
-```
-
-#### Skipping hooks
-
-If you need to skip the hooks for a specific commit:
-```bash
-git commit --no-verify
+maturin develop
 ```
 
 ## License
 
-[Add your license here]
-
-## Citation
-
-[Add citation information if applicable]
-
-## Contact
-
-For questions or issues, please open an issue on the [GitHub repository](https://github.com/alsmith151/ScNado/issues).
+[MIT](LICENSE)

@@ -1,0 +1,17 @@
+samples: "config/samples.tsv"
+# barcode_csv: "path/to/custom_barcodes.csv" # Optional: defaults to packaged barcodes
+barcode_mismatches: 2
+
+# Reference paths
+bowtie2_index: "reference/hg38"
+minimap2_index: "reference/hg38.fa"
+gtf_file: "reference/hg38.gtf"
+
+# Containers
+# Replace <username> with the actual GitHub username
+scnado_container: "docker://ghcr.io/<username>/scnado:latest"
+
+# Tool parameters
+cat_bin_size: 5000
+cat_n_features: 50000
+rna_n_top_genes: 2000

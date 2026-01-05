@@ -1,0 +1,140 @@
+import pandas as pd
+from pathlib import Path
+try:
+    import scnado
+    DEFAULT_BARCODES = scnado.get_barcode_csv()
+except ImportError:
+    DEFAULT_BARCODES = "python/scnado/data/barcodes_extracted.csv"
+
+configfile: "config/config.yaml"
+
+samples = pd.read_csv(config["samples"], sep="\t").set_index(["sample", "sublibrary"], drop=False)
+
+def get_barcode_csv(wildcards):
+    return config.get("barcode_csv", DEFAULT_BARCODES)
+
+def get_fastq_r1(wildcards):
+    return samples.loc[(wildcards.sample, wildcards.sublibrary), "fastq_r1"]
+
+def get_fastq_r2(wildcards):
+    return samples.loc[(wildcards.sample, wildcards.sublibrary), "fastq_r2"]
+
+rule all:
+    input:
+        expand("results/integrated/{sample}.h5mu", sample=samples["sample"].unique()),
+        expand("results/coverage/{sample}/", sample=samples["sample"].unique())
+
+rule find_barcodes:
+    input:
+        r1=get_fastq_r1,
+        r2=get_fastq_r2,
+        barcodes=get_barcode_csv
+    output:
+        r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
+        r2="results/barcoded/{sample}_{sublibrary}_R2.fastq.gz"
+    container:
+        config["scnado_container"]
+    shell:
+        "scnado find-barcodes "
+        "--r1 {input.r1} "
+        "--r2 {input.r2} "
+        "--barcodes {input.barcodes} "
+        "--output-prefix results/barcoded/{wildcards.sample}_{wildcards.sublibrary} "
+        "--n-missmatches {config[barcode_mismatches]} "
+        "--enable-n-to-match"
+
+rule align_cat:
+    input:
+        r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
+        index=config["bowtie2_index"]
+    output:
+        bam="results/aligned_cat/{sample}_{sublibrary}.bam"
+    container:
+        "docker://quay.io/biocontainers/bowtie2:2.5.4--he96a11b_7"
+    threads: 8
+    shell:
+        "bowtie2 -p {threads} -x {input.index} -U {input.r1} | "
+        "samtools sort -@ {threads} -o {output.bam}"
+
+rule align_rna:
+    input:
+        r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
+        index=config["minimap2_index"]
+    output:
+        bam="results/aligned_rna/{sample}_{sublibrary}.bam"
+    container:
+        "docker://quay.io/biocontainers/minimap2:2.30--h577a1d6_0"
+    threads: 8
+    shell:
+        "minimap2 -ax splice -t {threads} {input.index} {input.r1} | "
+        "samtools sort -@ {threads} -o {output.bam}"
+
+rule make_fragments:
+    input:
+        bam="results/aligned_cat/{sample}_{sublibrary}.bam"
+    output:
+        fragments="results/fragments/{sample}_{sublibrary}_fragments.tsv.gz"
+    container:
+        config["scnado_container"]
+    shell:
+        "scnado fragments "
+        "--bam {input.bam} "
+        "--output {output.fragments} "
+        "--barcode-regex '^[^|]+\\|(?P<barcode>[ACGT-]+)$' "
+        "--shift-plus 4 --shift-minus -5"
+
+rule process_cat:
+    input:
+        fragments=lambda wildcards: expand("results/fragments/{sample}_{sublib}_fragments.tsv.gz", 
+                                          sample=wildcards.sample, 
+                                          sublib=samples.loc[samples["sample"] == wildcards.sample, "sublibrary"])
+    output:
+        h5ad="results/processed_cat/{sample}.h5ad"
+    container:
+        "docker://quay.io/biocontainers/snapatac2:2.8.0--py311h284d45d_1"
+    script:
+        "scripts/process_cat.py"
+
+rule feature_counts:
+    input:
+        bam="results/aligned_rna/{sample}_{sublibrary}.bam",
+        gtf=config["gtf_file"]
+    output:
+        counts="results/counts/{sample}_{sublibrary}.txt"
+    container:
+        "docker://quay.io/biocontainers/subread:2.1.1--h577a1d6_0"
+    shell:
+        "featureCounts -a {input.gtf} -o {output.counts} -R BAM {input.bam}"
+
+rule process_rna:
+    input:
+        counts=lambda wildcards: expand("results/counts/{sample}_{sublib}.txt", 
+                                      sample=wildcards.sample, 
+                                      sublib=samples.loc[samples["sample"] == wildcards.sample, "sublibrary"])
+    output:
+        h5ad="results/processed_rna/{sample}.h5ad"
+    container:
+        "docker://quay.io/biocontainers/scanpy:1.9.3--py311h284d45d_0"
+    script:
+        "scripts/process_rna.py"
+
+rule integrate:
+    input:
+        cat="results/processed_cat/{sample}.h5ad",
+        rna="results/processed_rna/{sample}.h5ad"
+    output:
+        h5mu="results/integrated/{sample}.h5mu"
+    conda:
+        "envs/muon.yaml"
+    script:
+        "scripts/integrate.py"
+
+rule export_coverage:
+    input:
+        h5ad="results/processed_cat/{sample}.h5ad"
+    output:
+        directory("results/coverage/{sample}/")
+    container:
+        "docker://quay.io/biocontainers/snapatac2:2.8.0--py311h284d45d_1"
+    script:
+        "scripts/export_coverage.py"

@@ -1,0 +1,3 @@
+sample	sublibrary	fastq_r1	fastq_r2	modality
+sample1	sublib1	fastq_files/sublib1_R1.fastq.gz	fastq_files/sublib1_R2.fastq.gz	mixed
+sample1	sublib2	fastq_files/sublib2_R1.fastq.gz	fastq_files/sublib2_R2.fastq.gz	mixed
