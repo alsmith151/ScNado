@@ -1,16 +1,56 @@
+# Rust
 /target
-.gitignore
+Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.venv/
+venv/
+ENV/
+
+# Snakemake
+.snakemake/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific data/temp files
 barcodes/barcode_primers.tsv
 barcodes/barcodes_extracted.tsv
 barcodes/extract_barcode_sequences.ipynb
 reference/create_reference.ipynb
 reference/model_sequence.txt
 reference/reference_sequences.fa
-Cargo.lock
 cell-lines-11x-RNA_R1_001.fastq.gz
 cell-lines-11x-RNA_R2_001.fastq.gz
 rna_mapping_r2.bam
 rna_mapping.paf
 test.fq.gz
-.DS_Store
 initial_workflow/*

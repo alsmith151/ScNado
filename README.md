@@ -42,6 +42,32 @@ The project is containerized and available via GitHub Container Registry:
 docker pull ghcr.io/<username>/scnado:latest
 ```
 
+## Development and Testing
+
+### Running Tests
+
+The project includes both Rust and Python test suites.
+
+**Python Tests**:
+```bash
+pytest
+```
+
+**Rust Tests**:
+```bash
+cargo test
+```
+
+Note: Rust tests are run without the `extension-module` feature by default to avoid linker issues with Python symbols.
+
+### Building the Extension
+
+To build the Python extension module for development:
+
+```bash
+maturin develop
+```
+
 ## Usage
 
 ### Snakemake Pipeline

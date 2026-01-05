@@ -22,6 +22,6 @@ dependencies = [
 scnado-py = "scnado.cli:main"
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+features = ["extension-module"]
 module-name = "scnado._scnado"
 python-source = "python"
