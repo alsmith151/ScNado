@@ -10,6 +10,11 @@ configfile: "config/config.yaml"
 
 samples = pd.read_csv(config["samples"], sep="\t").set_index(["sample", "sublibrary"], drop=False)
 
+# Configuration flags for which analyses to run
+ENABLE_CAT = config.get("enable_cat", True)
+ENABLE_RNA = config.get("enable_rna", True)
+ENABLE_INTEGRATION = config.get("enable_integration", ENABLE_CAT and ENABLE_RNA)
+
 def get_barcode_csv(wildcards):
     return config.get("barcode_csv", DEFAULT_BARCODES)
 
@@ -19,10 +24,24 @@ def get_fastq_r1(wildcards):
 def get_fastq_r2(wildcards):
     return samples.loc[(wildcards.sample, wildcards.sublibrary), "fastq_r2"]
 
+def get_final_outputs():
+    outputs = []
+    
+    if ENABLE_INTEGRATION and ENABLE_CAT and ENABLE_RNA:
+        outputs.extend(expand("results/integrated/{sample}.h5mu", sample=samples["sample"].unique()))
+    
+    if ENABLE_CAT:
+        outputs.extend(expand("results/processed_cat/{sample}.h5ad", sample=samples["sample"].unique()))
+        outputs.extend(expand("results/coverage/{sample}/", sample=samples["sample"].unique()))
+    
+    if ENABLE_RNA:
+        outputs.extend(expand("results/processed_rna/{sample}.h5ad", sample=samples["sample"].unique()))
+    
+    return outputs
+
 rule all:
     input:
-        expand("results/integrated/{sample}.h5mu", sample=samples["sample"].unique()),
-        expand("results/coverage/{sample}/", sample=samples["sample"].unique())
+        get_final_outputs()
 
 rule find_barcodes:
     input:
@@ -56,19 +75,6 @@ rule align_cat:
         "bowtie2 -p {threads} -x {input.index} -U {input.r1} | "
         "samtools sort -@ {threads} -o {output.bam}"
 
-rule align_rna:
-    input:
-        r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
-        index=config["minimap2_index"]
-    output:
-        bam="results/aligned_rna/{sample}_{sublibrary}.bam"
-    container:
-        "docker://quay.io/biocontainers/minimap2:2.30--h577a1d6_0"
-    threads: 8
-    shell:
-        "minimap2 -ax splice -t {threads} {input.index} {input.r1} | "
-        "samtools sort -@ {threads} -o {output.bam}"
-
 rule make_fragments:
     input:
         bam="results/aligned_cat/{sample}_{sublibrary}.bam"
@@ -94,40 +100,6 @@ rule process_cat:
         "docker://quay.io/biocontainers/snapatac2:2.8.0--py311h284d45d_1"
     script:
         "scripts/process_cat.py"
-
-rule feature_counts:
-    input:
-        bam="results/aligned_rna/{sample}_{sublibrary}.bam",
-        gtf=config["gtf_file"]
-    output:
-        counts="results/counts/{sample}_{sublibrary}.txt"
-    container:
-        "docker://quay.io/biocontainers/subread:2.1.1--h577a1d6_0"
-    shell:
-        "featureCounts -a {input.gtf} -o {output.counts} -R BAM {input.bam}"
-
-rule process_rna:
-    input:
-        counts=lambda wildcards: expand("results/counts/{sample}_{sublib}.txt", 
-                                      sample=wildcards.sample, 
-                                      sublib=samples.loc[samples["sample"] == wildcards.sample, "sublibrary"])
-    output:
-        h5ad="results/processed_rna/{sample}.h5ad"
-    container:
-        "docker://quay.io/biocontainers/scanpy:1.9.3--py311h284d45d_0"
-    script:
-        "scripts/process_rna.py"
-
-rule integrate:
-    input:
-        cat="results/processed_cat/{sample}.h5ad",
-        rna="results/processed_rna/{sample}.h5ad"
-    output:
-        h5mu="results/integrated/{sample}.h5mu"
-    conda:
-        "envs/muon.yaml"
-    script:
-        "scripts/integrate.py"
 
 rule export_coverage:
     input:

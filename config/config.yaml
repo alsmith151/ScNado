@@ -2,6 +2,11 @@ samples: "config/samples.tsv"
 # barcode_csv: "path/to/custom_barcodes.csv" # Optional: defaults to packaged barcodes
 barcode_mismatches: 2
 
+# Analysis flags - control which analyses to run
+enable_cat: true          # Run CUT&TAG analysis
+enable_rna: true          # Run RNA analysis
+# enable_integration: true # Optional: defaults to true if both CAT and RNA enabled
+
 # Reference paths
 bowtie2_index: "reference/hg38"
 minimap2_index: "reference/hg38.fa"
