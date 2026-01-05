@@ -21,6 +21,7 @@ enum BarcodeType {
     BC2,
     BC3,
     BC4,
+    Umi,
 }
 
 fn fetch_default_barcode_ranges(barcode_type: &BarcodeType) -> std::ops::Range<usize> {
@@ -29,34 +30,8 @@ fn fetch_default_barcode_ranges(barcode_type: &BarcodeType) -> std::ops::Range<u
         BarcodeType::BC2 => 38..46,
         BarcodeType::BC3 => 0..8,
         BarcodeType::BC4 => 114..119,
+        BarcodeType::Umi => 119..127,
     }
-}
-
-#[derive(Debug)]
-struct SplitPoolBarcodes {
-    barcode_type: BarcodeType,
-    barcode_sequences: Vec<String>,
-    barcode_range: std::ops::Range<usize>,
-}
-impl SplitPoolBarcodes {
-    pub fn new(
-        barcode_type: BarcodeType,
-        barcode_sequences: Vec<String>,
-        barcode_range: std::ops::Range<usize>,
-    ) -> Self {
-        SplitPoolBarcodes {
-            barcode_type,
-            barcode_sequences,
-            barcode_range,
-        }
-    }
-}
-
-struct Barcodes {
-    bc1: SplitPoolBarcodes,
-    bc2: SplitPoolBarcodes,
-    bc3: SplitPoolBarcodes,
-    bc4: SplitPoolBarcodes,
 }
 
 fn load_barcodes<P: AsRef<Path>>(path: P) -> Result<HashMap<BarcodeType, Vec<String>>> {
@@ -276,6 +251,7 @@ fn collate_barcodes(
 /// * `output_prefix` - Prefix for the output FASTQ files.
 /// * `n_missmatches` - Optional number of allowed mismatches.
 /// * `ignore_ns` - Optional flag to ignore 'N' characters in barcode matching.
+/// * `allow_missing_barcodes` - Optional flag to allow missing barcodes.
 pub fn run<P: AsRef<Path>>(
     read1: P,
     read2: P,
@@ -291,9 +267,19 @@ pub fn run<P: AsRef<Path>>(
     info!("Output prefix: {}", output_prefix);
     info!("Number of mismatches allowed: {}", n_missmatches);
     info!("Ignore Ns in barcode matching: {}", ignore_ns);
+    info!(
+        "Will filter reads with missing barcodes: {}",
+        !allow_missing_barcodes
+    );
 
     let output_r1 = format!("{output_prefix}_R1.fastq.gz");
     let output_r2 = format!("{output_prefix}_R2.fastq.gz");
+
+    // Make sure the output directory exists
+    if let Some(parent) = Path::new(&output_prefix).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
     let (mut reader_r1, mut writer_r1) = get_reader_and_writer(read1, output_r1)?;
     let (mut reader_r2, mut writer_r2) = get_reader_and_writer(read2, output_r2)?;
 
@@ -343,8 +329,10 @@ pub fn run<P: AsRef<Path>>(
             // Skip reads without complete barcodes
             continue;
         }
+
+        let umi = extract_barcode(seq_r2, &BarcodeType::Umi)?;
         let cell_barcode = cell_barcode.unwrap();
-        let new_id_for_r2 = format!("{}|{}", id_r2, cell_barcode);
+        let new_id_for_r2 = format!("{}|{}|{}", id_r2, cell_barcode, umi);
         let new_id_for_r1 = new_id_for_r2.clone().replace(id_r2, id_r1);
 
         // Trim the sequence to remove barcodes
@@ -412,66 +400,74 @@ mod tests {
     //         "TTAATTAA".to_string(),
     //     ];
 
-    //     let result = identify_best_barcode("ATCGATCG", &valid_barcodes, 0, None.unwrap_or(false));
-    //     assert!(result.is_ok());
-    //     let (barcode, distance) = result.unwrap().unwrap();
-    //     assert_eq!(barcode, "ATCGATCG");
-    //     assert_eq!(distance, 0);
-    // }
+    #[test]
+    fn test_identify_best_barcode_exact_match() {
+        let valid_barcodes = vec![
+            "ATCGATCG".to_string(),
+            "GCTAGCTA".to_string(),
+            "TTAATTAA".to_string(),
+        ];
 
-    // #[test]
-    // fn test_identify_best_barcode_with_mismatch() {
-    //     let valid_barcodes = vec![
-    //         "ATCGATCG".to_string(),
-    //         "GCTAGCTA".to_string(),
-    //         "TTAATTAA".to_string(),
-    //     ];
+        let result = identify_best_barcode("ATCGATCG", &valid_barcodes, 0, false);
+        assert!(result.is_ok());
+        let (barcode, distance) = result.unwrap().unwrap();
+        assert_eq!(barcode, "ATCGATCG");
+        assert_eq!(distance, 0);
+    }
 
-    //     // One mismatch: "ATCGATCG" vs "ATCGATCA"
-    //     let result = identify_best_barcode("ATCGATCA", &valid_barcodes, 1, None.unwrap_or(false));
-    //     assert!(result.is_some());
-    //     let (barcode, distance) = result.unwrap();
-    //     assert_eq!(barcode, "ATCGATCG");
-    //     assert_eq!(distance, 1);
-    // }
+    #[test]
+    fn test_identify_best_barcode_with_mismatch() {
+        let valid_barcodes = vec![
+            "ATCGATCG".to_string(),
+            "GCTAGCTA".to_string(),
+            "TTAATTAA".to_string(),
+        ];
 
-    // #[test]
-    // fn test_identify_best_barcode_too_many_mismatches() {
-    //     let valid_barcodes = vec![
-    //         "ATCGATCG".to_string(),
-    //         "GCTAGCTA".to_string(),
-    //         "TTAATTAA".to_string(),
-    //     ];
+        // One mismatch: "ATCGATCG" vs "ATCGATCA"
+        let result = identify_best_barcode("ATCGATCA", &valid_barcodes, 1, false);
+        assert!(result.is_ok());
+        let (barcode, distance) = result.unwrap().unwrap();
+        assert_eq!(barcode, "ATCGATCG");
+        assert_eq!(distance, 1);
+    }
 
-    //     let result = identify_best_barcode("ATCGANNN", &valid_barcodes, 1, None.unwrap_or(false));
-    //     println!("{:?}", result);
-    //     assert!(result.is_none());
-    // }
+    #[test]
+    fn test_identify_best_barcode_too_many_mismatches() {
+        let valid_barcodes = vec![
+            "ATCGATCG".to_string(),
+            "GCTAGCTA".to_string(),
+            "TTAATTAA".to_string(),
+        ];
 
-    // #[test]
-    // fn test_identify_best_barcode_no_valid_barcodes() {
-    //     let valid_barcodes = vec!["ATCGATCG".to_string()];
-    //     let result = identify_best_barcode("NNNNNNNNNN", &valid_barcodes, 0, None.unwrap_or(false));
-    //     println!("{:?}", result);
-    //     assert!(result.is_none());
-    // }
+        let result = identify_best_barcode("ATCGANNN", &valid_barcodes, 1, false);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
 
-    // #[test]
-    // fn test_identify_best_barcode_chooses_closest() {
-    //     let valid_barcodes = vec![
-    //         "ATCGATCG".to_string(),
-    //         "ATCGATCA".to_string(), // 2 mismatches from test sequence
-    //         "TTAATTAA".to_string(),
-    //     ];
+    #[test]
+    fn test_identify_best_barcode_no_valid_barcodes() {
+        let valid_barcodes = vec!["ATCGATCG".to_string()];
+        let result = identify_best_barcode("NNNNNNNNNN", &valid_barcodes, 0, false);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
 
-    //     // "ATCGATAA" vs "ATCGATCA" = 1 mismatch (position 6: T vs C)
-    //     // Should match "ATCGATCA" with distance 1
-    //     let result = identify_best_barcode("ATCGATAA", &valid_barcodes, 2, None.unwrap_or(false));
-    //     assert!(result.is_some());
-    //     let (barcode, distance) = result.unwrap();
-    //     assert_eq!(barcode, "ATCGATCA");
-    //     assert_eq!(distance, 1);
-    // }
+    #[test]
+    fn test_identify_best_barcode_chooses_closest() {
+        let valid_barcodes = vec![
+            "ATCGATCG".to_string(),
+            "ATCGATCA".to_string(), // 2 mismatches from test sequence
+            "TTAATTAA".to_string(),
+        ];
+
+        // "ATCGATAA" vs "ATCGATCA" = 1 mismatch (position 6: T vs C)
+        // Should match "ATCGATCA" with distance 1
+        let result = identify_best_barcode("ATCGATAA", &valid_barcodes, 2, false);
+        assert!(result.is_ok());
+        let (barcode, distance) = result.unwrap().unwrap();
+        assert_eq!(barcode, "ATCGATCA");
+        assert_eq!(distance, 1);
+    }
 
     #[test]
     fn test_identify_best_barcode_with_ns_ignored() {
