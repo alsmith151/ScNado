@@ -70,9 +70,26 @@ maturin develop
 
 ## Usage
 
+### Quick Start
+
+1. **Initialize a new project**:
+   ```bash
+   pyscnado workflow init --outdir ./my_analysis
+   cd ./my_analysis
+   ```
+
+2. **Configure your analysis**:
+   - Edit `config/config.yaml` to set reference paths and container image
+   - Edit `config/samples.tsv` with your sample information
+
+3. **Run the pipeline**:
+   ```bash
+   pyscnado workflow run --cores 8
+   ```
+
 ### Snakemake Pipeline
 
-The primary way to run the pipeline is via Snakemake.
+The primary way to run the pipeline is via the `pyscnado workflow` command.
 
 1. **Configure the pipeline**:
    Edit [config/config.yaml](config/config.yaml) to set your reference paths and parameters.
@@ -80,8 +97,42 @@ The primary way to run the pipeline is via Snakemake.
 
 2. **Run the pipeline**:
    ```bash
-   snakemake --use-conda --use-singularity --cores 8
+   # Run with default settings (8 cores)
+   pyscnado workflow run
+   
+   # Run with custom core count
+   pyscnado workflow run --cores 16
+   
+   # Run with Docker containers
+   pyscnado workflow run --use-docker --cores 8
+   
+   # Dry run to see what would be executed
+   pyscnado workflow run --dry-run
+   
+   # Use conda for dependencies
+   pyscnado workflow run --use-conda
    ```
+
+### Docker Usage
+
+To run the entire pipeline from within the Docker container:
+
+```bash
+docker run -v $(pwd):/work -w /work ghcr.io/alsmith151/scnado:latest \
+  pyscnado workflow init --outdir ./my_analysis
+
+cd ./my_analysis
+
+docker run -v $(pwd):/work -w /work ghcr.io/alsmith151/scnado:latest \
+  pyscnado workflow run --use-docker --cores 8
+```
+
+Or with Singularity:
+
+```bash
+singularity exec docker://ghcr.io/alsmith151/scnado:latest \
+  pyscnado workflow run --use-singularity --cores 8
+```
 
 ### Rust CLI
 

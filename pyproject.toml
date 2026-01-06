@@ -16,10 +16,11 @@ dependencies = [
     "matplotlib",
     "seaborn",
     "mudata",
+    "typer[all]>=0.9.0",
 ]
 
 [project.scripts]
-scnado-py = "scnado.cli:main"
+pyscnado = "scnado.cli:app"
 
 [tool.maturin]
 features = ["extension-module"]
