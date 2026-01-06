@@ -39,7 +39,7 @@ barcode_path = scnado.get_barcode_csv()
 The project is containerized and available via GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/<username>/scnado:latest
+docker pull ghcr.io/alsmith151/scnado:latest
 ```
 
 ## Development and Testing
