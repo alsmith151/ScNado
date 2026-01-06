@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pyscnado = "scnado.cli:app"
+scnado = "scnado.cli:app"
 
 [tool.maturin]
 features = ["extension-module"]

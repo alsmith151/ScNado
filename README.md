@@ -1,6 +1,6 @@
-# ScNado
+# scnado
 
-ScNado is a high-performance pipeline for processing single-cell CUT&TAG (CAT) and RNA-seq data. It combines a fast Rust-based barcode detection engine with a Python-based analysis suite and a containerized Snakemake workflow.
+scnado is a high-performance pipeline for processing single-cell CUT&TAG (CAT) and RNA-seq data. It combines a fast Rust-based barcode detection engine with a Python-based analysis suite and a containerized Snakemake workflow.
 
 ## Features
 
@@ -11,23 +11,28 @@ ScNado is a high-performance pipeline for processing single-cell CUT&TAG (CAT) a
 
 ## Project Structure
 
-- [python/scnado/](python/scnado/): Python package for single-cell analysis.
-- [src/](src/): Rust source code for the `scnado` CLI.
-- [workflow/](workflow/): Snakemake workflow and scripts.
-- [config/](config/): Configuration files and sample sheets.
-- [initial_workflow/](initial_workflow/): Original prototype notebooks and scripts.
+| Directory | Description |
+|-----------|-------------|
+| [python/scnado/](python/scnado/) | Python package for single-cell analysis |
+| [src/](src/) | Rust source code for barcode processing |
+| [workflow/](workflow/) | Snakemake workflow and scripts |
+| [config/](config/) | Configuration files and sample sheets |
 
 ## Installation
 
-### Python Package (Mixed Rust/Python)
+### From Source (Recommended)
 
-The package is built using `maturin`. To install it locally:
+The package is built using `maturin`. To install locally:
 
 ```bash
 pip install .
 ```
 
-This will compile the Rust components and install the `scnado` CLI and `scnado` Python module. The package includes default barcode reference files which can be accessed via:
+This installs:
+- **`scnado`** - Python CLI for the complete analysis pipeline
+- **`scnado`** Python module - for programmatic access
+
+The Rust functions (barcode detection, fragment generation) are accessible through the Python CLI and module:
 
 ```python
 import scnado
@@ -74,7 +79,7 @@ maturin develop
 
 1. **Initialize a new project**:
    ```bash
-   pyscnado workflow init --outdir ./my_analysis
+   scnado workflow init --outdir ./my_analysis
    cd ./my_analysis
    ```
 
@@ -84,34 +89,60 @@ maturin develop
 
 3. **Run the pipeline**:
    ```bash
-   pyscnado workflow run --cores 8
+   scnado workflow run --cores 8
    ```
 
-### Snakemake Pipeline
+### Workflow Management
 
-The primary way to run the pipeline is via the `pyscnado workflow` command.
+The `scnado workflow` commands manage the Snakemake pipeline:
 
-1. **Configure the pipeline**:
-   Edit [config/config.yaml](config/config.yaml) to set your reference paths and parameters.
-   Update [config/samples.tsv](config/samples.tsv) with your sample metadata and FASTQ paths.
+1. **Initialize a new project**:
+   ```bash
+   scnado workflow init --outdir ./my_project
+   ```
 
 2. **Run the pipeline**:
    ```bash
    # Run with default settings (8 cores)
-   pyscnado workflow run
+   scnado workflow run
    
    # Run with custom core count
-   pyscnado workflow run --cores 16
+   scnado workflow run --cores 16
    
    # Run with Docker containers
-   pyscnado workflow run --use-docker --cores 8
+   scnado workflow run --use-docker --cores 8
    
    # Dry run to see what would be executed
-   pyscnado workflow run --dry-run
+   scnado workflow run --dry-run
    
    # Use conda for dependencies
-   pyscnado workflow run --use-conda
+   scnado workflow run --use-conda
    ```
+
+### Core Commands
+
+scnado provides direct access to the Rust-based processing tools:
+
+**Find barcodes in FASTQ files**:
+```bash
+scnado find-barcodes \
+  --r1 input_R1.fastq.gz \
+  --r2 input_R2.fastq.gz \
+  --barcodes barcodes.csv \
+  --output-prefix results/barcoded/sample1 \
+  --n-missmatches 2 \
+  --enable-n-to-match
+```
+
+**Extract fragments from BAM file**:
+```bash
+scnado fragments \
+  --bam aligned.bam \
+  --output fragments.tsv.gz \
+  --barcode-regex '^[^|]+\|(?P<barcode>[ACGT-]+)$' \
+  --shift-plus 4 \
+  --shift-minus -5
+```
 
 ### Docker Usage
 
@@ -119,38 +150,19 @@ To run the entire pipeline from within the Docker container:
 
 ```bash
 docker run -v $(pwd):/work -w /work ghcr.io/alsmith151/scnado:latest \
-  pyscnado workflow init --outdir ./my_analysis
+  scnado workflow init --outdir ./my_analysis
 
 cd ./my_analysis
 
 docker run -v $(pwd):/work -w /work ghcr.io/alsmith151/scnado:latest \
-  pyscnado workflow run --use-docker --cores 8
+  scnado workflow run --use-docker --cores 8
 ```
 
 Or with Singularity:
 
 ```bash
 singularity exec docker://ghcr.io/alsmith151/scnado:latest \
-  pyscnado workflow run --use-singularity --cores 8
-```
-
-### Rust CLI
-
-The `scnado` binary provides low-level tools for barcode processing:
-
-```bash
-# Find barcodes and extract UMIs
-scnado find-barcodes \
-  --r1 input_R1.fastq.gz \
-  --r2 input_R2.fastq.gz \
-  --barcodes barcodes.csv \
-  --output-prefix results/barcoded/sample1
-
-# Generate fragments from BAM
-scnado fragments \
-  --bam aligned.bam \
-  --output fragments.tsv.gz \
-  --barcode-regex '^[^|]+\|(?P<barcode>[ACGT-]+)$'
+  scnado workflow run --use-singularity --cores 8
 ```
 
 ## Development

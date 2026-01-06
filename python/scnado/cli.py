@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -9,9 +10,61 @@ from .cat import process_cat, analyze_cat_dataset
 from .multiome import integrate_cat_rna
 from .rna import process_rna
 
-app = typer.Typer(help="pyscnado: Single-cell CUT&TAG and RNA-seq analysis pipeline")
+app = typer.Typer(help="scnado: Single-cell CUT&TAG and RNA-seq analysis pipeline")
 workflow_app = typer.Typer(help="Workflow management")
 app.add_typer(workflow_app, name="workflow")
+
+
+@app.command()
+def find_barcodes(
+    r1: str = typer.Option(..., "--r1", help="Input R1 FASTQ file"),
+    r2: str = typer.Option(..., "--r2", help="Input R2 FASTQ file"),
+    barcodes: str = typer.Option(..., "--barcodes", help="Barcode CSV file"),
+    output_prefix: str = typer.Option(..., "--output-prefix", help="Output file prefix"),
+    n_missmatches: int = typer.Option(0, "--n-missmatches", help="Number of allowed mismatches"),
+    enable_n_to_match: bool = typer.Option(False, "--enable-n-to-match", help="Allow N in barcode matching"),
+) -> None:
+    """Find barcodes in FASTQ files and extract UMIs."""
+    try:
+        from ._scnado import find_barcodes as rust_find_barcodes
+        rust_find_barcodes(r1, r2, barcodes, output_prefix, n_missmatches, enable_n_to_match)
+        typer.echo("✓ Barcode finding complete")
+    except ImportError:
+        typer.echo("Error: scnado Rust module not installed. Run: pip install .", err=True)
+        raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def fragments(
+    bam: str = typer.Option(..., "--bam", help="Input BAM file"),
+    output: str = typer.Option(..., "--output", help="Output fragments file"),
+    barcode_regex: Optional[str] = typer.Option(None, "--barcode-regex", help="Regex to extract barcode from read name"),
+    shift_plus: int = typer.Option(0, "--shift-plus", help="Shift for plus strand"),
+    shift_minus: int = typer.Option(0, "--shift-minus", help="Shift for minus strand"),
+    fragment_length_extension: Optional[int] = typer.Option(None, "--fragment-length-extension", help="Fragment length extension"),
+) -> None:
+    """Extract fragments from BAM file."""
+    # Validate regex if provided
+    if barcode_regex:
+        try:
+            re.compile(barcode_regex)
+        except re.error as e:
+            typer.echo(f"Error: Invalid regex pattern: {e}", err=True)
+            raise typer.Exit(code=1)
+    
+    try:
+        from ._scnado import fragments as rust_fragments
+        rust_fragments(bam, output, barcode_regex, shift_plus, shift_minus, fragment_length_extension)
+        typer.echo("✓ Fragment generation complete")
+    except ImportError:
+        typer.echo("Error: scnado Rust module not installed. Run: pip install .", err=True)
+        raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
 
 
 @workflow_app.command()
