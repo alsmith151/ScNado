@@ -1,13 +1,75 @@
 use anyhow::Result;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use log::info;
 use noodles::fastq;
 use noodles::fastq::record::Definition;
 use polars::prelude::*;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hash;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
+use gzp::par::compress::{ParCompressBuilder, Compression};
+use gzp::deflate::Gzip;
+use std::env;
+
+const BATCH_SIZE: usize = 5000;
+
+#[derive(Debug, Default)]
+struct BarcodeStats {
+    total_reads: u64,
+    matches_0: u64,
+    matches_1: u64,
+    matches_2: u64,
+    matches_3: u64,
+    matches_4: u64,
+}
+
+impl BarcodeStats {
+    fn record(&mut self, num_matches: usize) {
+        self.total_reads += 1;
+        match num_matches {
+            0 => self.matches_0 += 1,
+            1 => self.matches_1 += 1,
+            2 => self.matches_2 += 1,
+            3 => self.matches_3 += 1,
+            4 => self.matches_4 += 1,
+            _ => (),
+        }
+    }
+
+    fn report(&self) {
+        info!("--- Barcode Statistics ---");
+        info!("Total reads processed: {}", self.total_reads);
+        info!(
+            "Reads with 4/4 barcodes: {} ({:.2}%)",
+            self.matches_4,
+            (self.matches_4 as f64 / self.total_reads as f64) * 100.0
+        );
+        info!(
+            "Reads with 3/4 barcodes: {} ({:.2}%)",
+            self.matches_3,
+            (self.matches_3 as f64 / self.total_reads as f64) * 100.0
+        );
+        info!(
+            "Reads with 2/4 barcodes: {} ({:.2}%)",
+            self.matches_2,
+            (self.matches_2 as f64 / self.total_reads as f64) * 100.0
+        );
+        info!(
+            "Reads with 1/4 barcodes: {} ({:.2}%)",
+            self.matches_1,
+            (self.matches_1 as f64 / self.total_reads as f64) * 100.0
+        );
+        info!(
+            "Reads with 0/4 barcodes: {} ({:.2}%)",
+            self.matches_0,
+            (self.matches_0 as f64 / self.total_reads as f64) * 100.0
+        );
+        info!("---------------------------");
+    }
+}
 
 // Type aliases to simplify complex types
 /// A dynamic FASTQ reader that can handle both compressed and uncompressed files
@@ -196,8 +258,16 @@ pub fn get_reader_and_writer<P1: AsRef<Path>, P2: AsRef<Path>>(
     {
         Some(ext) if ext == "gz" => {
             let file = File::create(output_path)?;
-            let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-            Box::new(encoder)
+            let num_threads = env::var("SCNADO_THREADS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(4);
+
+            let writer = ParCompressBuilder::<Gzip>::new()
+                .num_threads(num_threads)
+                .unwrap()
+                .from_writer(file);
+            Box::new(writer)
         }
         Some(ext) if ext == "fastq" || ext == "fq" => {
             let file = File::create(output_path)?;
@@ -260,6 +330,7 @@ pub fn run<P: AsRef<Path>>(
     n_missmatches: usize,
     ignore_ns: bool,
     allow_missing_barcodes: bool,
+    check_cancel: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<()> {
     info!("Processing reads from {:?}", read1.as_ref());
     info!("Processing reads from {:?}", read2.as_ref());
@@ -286,74 +357,104 @@ pub fn run<P: AsRef<Path>>(
     info!("Loading barcodes from {:?}", barcodes.as_ref());
     let barcode_map = load_barcodes(barcodes)?;
 
-    // Pre-allocate reusable buffers outside the loop
-    let mut barcodes_found: HashMap<BarcodeType, String> = HashMap::new();
-    let mut barcodes_matched: HashMap<BarcodeType, (String, usize)> = HashMap::new();
+    let pb = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} [{elapsed_precise}] {pos} reads processed ({per_sec})")
+            .unwrap(),
+    );
 
-    for (ii, (result_r1, result_r2)) in reader_r1.records().zip(reader_r2.records()).enumerate() {
-        let record_r1 = result_r1?;
-        let record_r2 = result_r2?;
-        let seq_r2 = std::str::from_utf8(record_r2.sequence())?;
-        let id_r1 = std::str::from_utf8(record_r1.name())?;
-        let id_r2 = std::str::from_utf8(record_r2.name())?;
+    let mut stats = BarcodeStats::default();
+    let mut r1_records = reader_r1.records();
+    let mut r2_records = reader_r2.records();
 
-        if ii % 1_000_000 == 0 {
-            info!("Processed {ii} reads");
+    loop {
+        if let Some(check) = check_cancel {
+            check()?;
         }
-
-        // Clear and reuse HashMaps
-        barcodes_found.clear();
-        barcodes_matched.clear();
-
-        for bc_type in &[
-            BarcodeType::BC1,
-            BarcodeType::BC2,
-            BarcodeType::BC3,
-            BarcodeType::BC4,
-        ] {
-            let bc = extract_barcode(seq_r2, bc_type)?;
-            barcodes_found.insert(bc_type.clone(), bc);
-        }
-        for (bc_type, bc_seq) in &barcodes_found {
-            if let Some(valid_barcodes) = barcode_map.get(bc_type)
-                && let Ok(Some((best_match, distance))) =
-                    identify_best_barcode(bc_seq, valid_barcodes, n_missmatches, ignore_ns)
-            {
-                barcodes_matched.insert(bc_type.clone(), (best_match, distance));
+        let mut batch = Vec::with_capacity(BATCH_SIZE);
+        for _ in 0..BATCH_SIZE {
+            match (r1_records.next(), r2_records.next()) {
+                (Some(r1), Some(r2)) => batch.push((r1?, r2?)),
+                _ => break,
             }
         }
 
-        let cell_barcode = collate_barcodes(&barcodes_matched, allow_missing_barcodes);
-
-        if cell_barcode.is_none() {
-            // Skip reads without complete barcodes
-            continue;
+        if batch.is_empty() {
+            break;
         }
 
-        let umi = extract_barcode(seq_r2, &BarcodeType::Umi)?;
-        let cell_barcode = cell_barcode.unwrap();
-        let new_id_for_r2 = format!("{}|{}|{}", id_r2, cell_barcode, umi);
-        let new_id_for_r1 = new_id_for_r2.clone().replace(id_r2, id_r1);
+        let processed: Vec<Result<(Option<fastq::Record>, Option<fastq::Record>, usize)>> = batch
+            .into_par_iter()
+            .map(|(record_r1, record_r2)| {
+                let seq_r2 = std::str::from_utf8(record_r2.sequence())?;
+                let id_r1 = std::str::from_utf8(record_r1.name())?;
+                let id_r2 = std::str::from_utf8(record_r2.name())?;
 
-        // Trim the sequence to remove barcodes
-        // We have ~138 bp of barcodes on the 5' end of the read so just remove the first 138 bp
-        let r2_trimmed_seq = &seq_r2[138..];
-        let quality_scores = &record_r2.quality_scores()[138..];
+                let mut barcodes_matched = HashMap::with_capacity(4);
+                let mut num_found = 0;
 
-        let r1_record = fastq::Record::new(
-            Definition::new(new_id_for_r1, record_r1.description()),
-            record_r1.sequence(),
-            record_r1.quality_scores(),
-        );
-        let r2_record = fastq::Record::new(
-            Definition::new(new_id_for_r2, record_r2.description()),
-            r2_trimmed_seq,
-            quality_scores,
-        );
+                for bc_type in &[
+                    BarcodeType::BC1,
+                    BarcodeType::BC2,
+                    BarcodeType::BC3,
+                    BarcodeType::BC4,
+                ] {
+                    let bc_seq = extract_barcode(seq_r2, bc_type)?;
+                    if let Some(valid_barcodes) = barcode_map.get(bc_type) {
+                        if let Some((best_match, distance)) =
+                            identify_best_barcode(&bc_seq, valid_barcodes, n_missmatches, ignore_ns)?
+                        {
+                            barcodes_matched.insert((*bc_type).clone(), (best_match, distance));
+                            num_found += 1;
+                        }
+                    }
+                }
 
-        writer_r1.write_record(&r1_record)?;
-        writer_r2.write_record(&r2_record)?;
+                let cell_barcode = collate_barcodes(&barcodes_matched, allow_missing_barcodes);
+
+                if let Some(cell_barcode) = cell_barcode {
+                    let umi = extract_barcode(seq_r2, &BarcodeType::Umi)?;
+                    let new_id_for_r2 = format!("{}|{}|{}", id_r2, cell_barcode, umi);
+                    let new_id_for_r1 = new_id_for_r2.replace(id_r2, id_r1);
+
+                    if record_r2.sequence().len() < 138 {
+                        return Err(anyhow::anyhow!("Read 2 sequence too short (< 138 bp)"));
+                    }
+
+                    let r2_trimmed_seq = &record_r2.sequence()[138..];
+                    let quality_scores = &record_r2.quality_scores()[138..];
+
+                    let r1_record = fastq::Record::new(
+                        Definition::new(new_id_for_r1, record_r1.description()),
+                        record_r1.sequence(),
+                        record_r1.quality_scores(),
+                    );
+                    let r2_record = fastq::Record::new(
+                        Definition::new(new_id_for_r2, record_r2.description()),
+                        r2_trimmed_seq,
+                        quality_scores,
+                    );
+                    Ok((Some(r1_record), Some(r2_record), num_found))
+                } else {
+                    Ok((None, None, num_found))
+                }
+            })
+            .collect();
+
+        for result in processed {
+            let (r1, r2, num_found) = result?;
+            stats.record(num_found);
+            if let (Some(r1), Some(r2)) = (r1, r2) {
+                writer_r1.write_record(&r1)?;
+                writer_r2.write_record(&r2)?;
+            }
+            pb.inc(1);
+        }
     }
+
+    pb.finish_and_clear();
+    stats.report();
     Ok(())
 }
 

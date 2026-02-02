@@ -1,11 +1,12 @@
 import re
 import subprocess
 import sys
+import logging
 from pathlib import Path
 from typing import Optional
 
 import typer
-
+import loguru
 from .cat import process_cat, analyze_cat_dataset
 from .multiome import integrate_cat_rna
 from .rna import process_rna
@@ -25,6 +26,7 @@ def find_barcodes(
     enable_n_to_match: bool = typer.Option(False, "--enable-n-to-match", help="Allow N in barcode matching"),
 ) -> None:
     """Find barcodes in FASTQ files and extract UMIs."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         from ._scnado import find_barcodes as rust_find_barcodes
         rust_find_barcodes(r1, r2, barcodes, output_prefix, n_missmatches, enable_n_to_match)
@@ -47,6 +49,7 @@ def fragments(
     fragment_length_extension: Optional[int] = typer.Option(None, "--fragment-length-extension", help="Fragment length extension"),
 ) -> None:
     """Extract fragments from BAM file."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     # Validate regex if provided
     if barcode_regex:
         try:

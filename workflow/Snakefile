@@ -65,14 +65,15 @@ rule find_barcodes:
 rule align_cat:
     input:
         r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
-        index=config["bowtie2_index"]
     output:
         bam="results/aligned_cat/{sample}_{sublibrary}.bam"
     container:
         "docker://quay.io/biocontainers/bowtie2:2.5.4--he96a11b_7"
     threads: 8
+    params:
+        index=config["bowtie2_index"]
     shell:
-        "bowtie2 -p {threads} -x {input.index} -U {input.r1} | "
+        "bowtie2 -p {threads} -x {params.index} -U {input.r1} | "
         "samtools sort -@ {threads} -o {output.bam}"
 
 rule make_fragments:

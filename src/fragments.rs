@@ -35,6 +35,7 @@ pub fn run<P: AsRef<Path>>(
     shift_plus: i64,
     shift_minus: i64,
     fragment_length_extension: Option<usize>,
+    check_cancel: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<()> {
     info!("Processing BAM file: {:?}", bam_file.as_ref());
     let mut reader = bam::io::reader::Builder.build_from_path(bam_file)?;
@@ -50,7 +51,12 @@ pub fn run<P: AsRef<Path>>(
     let mut writer = std::io::BufWriter::new(File::create(outfile)?);
     let mut fragments = HashMap::new();
 
-    for result in reader.records() {
+    for (i, result) in reader.records().enumerate() {
+        if let Some(check) = check_cancel {
+            if i % 10000 == 0 {
+                check()?;
+            }
+        }
         let record = result?;
         if record.flags().is_unmapped() {
             continue;

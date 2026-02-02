@@ -10,6 +10,12 @@ mod python_bindings {
     use pyo3::{PyResult, exceptions::PyRuntimeError};
     use std::path::PathBuf;
 
+    fn check_signals() -> anyhow::Result<()> {
+        Python::with_gil(|py| {
+            py.check_signals().map_err(|e| anyhow::anyhow!(e))
+        })
+    }
+
     #[pyfunction]
     pub fn find_barcodes(
         r1: String,
@@ -31,6 +37,7 @@ mod python_bindings {
             n_missmatches,
             enable_n_to_match,
             false,
+            Some(&check_signals),
         )
         .map_err(|e| PyRuntimeError::new_err(format!("Barcode finding failed: {}", e)))
     }
@@ -63,6 +70,7 @@ mod python_bindings {
             shift_plus,
             shift_minus,
             fragment_length_extension,
+            Some(&check_signals),
         )
         .map_err(|e| PyRuntimeError::new_err(format!("Fragment generation failed: {}", e)))
     }
@@ -71,6 +79,8 @@ mod python_bindings {
 #[cfg(feature = "extension-module")]
 #[pymodule]
 fn _scnado(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyo3_log::init();
+
     // Register PyO3-exposed functions; signature annotation above handles optional params ordering.
     m.add_function(wrap_pyfunction!(python_bindings::find_barcodes, m)?)?;
     m.add_function(wrap_pyfunction!(python_bindings::fragments, m)?)?;
