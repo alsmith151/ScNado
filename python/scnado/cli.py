@@ -1,7 +1,6 @@
 import re
 import subprocess
 import sys
-import logging
 from pathlib import Path
 from typing import Optional
 
@@ -26,7 +25,6 @@ def find_barcodes(
     enable_n_to_match: bool = typer.Option(False, "--enable-n-to-match", help="Allow N in barcode matching"),
 ) -> None:
     """Find barcodes in FASTQ files and extract UMIs."""
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         from ._scnado import find_barcodes as rust_find_barcodes
         rust_find_barcodes(r1, r2, barcodes, output_prefix, n_missmatches, enable_n_to_match)
@@ -44,23 +42,30 @@ def fragments(
     bam: str = typer.Option(..., "--bam", help="Input BAM file"),
     output: str = typer.Option(..., "--output", help="Output fragments file"),
     barcode_regex: Optional[str] = typer.Option(None, "--barcode-regex", help="Regex to extract barcode from read name"),
+    umi_regex: Optional[str] = typer.Option(None, "--umi-regex", help="Regex to extract UMI from read name"),
     shift_plus: int = typer.Option(0, "--shift-plus", help="Shift for plus strand"),
     shift_minus: int = typer.Option(0, "--shift-minus", help="Shift for minus strand"),
     fragment_length_extension: Optional[int] = typer.Option(None, "--fragment-length-extension", help="Fragment length extension"),
 ) -> None:
     """Extract fragments from BAM file."""
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
     # Validate regex if provided
     if barcode_regex:
         try:
             re.compile(barcode_regex)
         except re.error as e:
-            typer.echo(f"Error: Invalid regex pattern: {e}", err=True)
+            typer.echo(f"Error: Invalid barcode regex pattern: {e}", err=True)
+            raise typer.Exit(code=1)
+            
+    if umi_regex:
+        try:
+            re.compile(umi_regex)
+        except re.error as e:
+            typer.echo(f"Error: Invalid umi regex pattern: {e}", err=True)
             raise typer.Exit(code=1)
     
     try:
         from ._scnado import fragments as rust_fragments
-        rust_fragments(bam, output, barcode_regex, shift_plus, shift_minus, fragment_length_extension)
+        rust_fragments(bam, output, barcode_regex, umi_regex, shift_plus, shift_minus, fragment_length_extension)
         typer.echo("✓ Fragment generation complete")
     except ImportError:
         typer.echo("Error: scnado Rust module not installed. Run: pip install .", err=True)

@@ -51,8 +51,14 @@ rule find_barcodes:
     output:
         r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
         r2="results/barcoded/{sample}_{sublibrary}_R2.fastq.gz"
+    log:
+        "logs/find_barcodes/{sample}_{sublibrary}.log"
     container:
         config["scnado_container"]
+    resources:
+        mem="1G",
+        runtime='4h',
+    threads: 8
     shell:
         "scnado find-barcodes "
         "--r1 {input.r1} "
@@ -61,6 +67,7 @@ rule find_barcodes:
         "--output-prefix results/barcoded/{wildcards.sample}_{wildcards.sublibrary} "
         "--n-missmatches {config[barcode_mismatches]} "
         "--enable-n-to-match"
+        " > {log} 2>&1"
 
 rule align_cat:
     input:
@@ -68,13 +75,20 @@ rule align_cat:
     output:
         bam="results/aligned_cat/{sample}_{sublibrary}.bam"
     container:
-        "docker://quay.io/biocontainers/bowtie2:2.5.4--he96a11b_7"
+        "oras://ghcr.io/alsmith151/seqnado_pipeline:latest"
     threads: 8
+    resources:
+        mem=lambda wc, attempt: f"{16 ** 2 * attempt}G",
+        runtime='4h',        
     params:
         index=config["bowtie2_index"]
     shell:
-        "bowtie2 -p {threads} -x {params.index} -U {input.r1} | "
-        "samtools sort -@ {threads} -o {output.bam}"
+        """
+        bowtie2 -p {threads} -x {params.index} -U {input.r1} | \
+        samtools view -@ {threads} -b - > {output.bam}.unsorted.bam && \
+        samtools sort -@ {threads} -o {output.bam} {output.bam}.unsorted.bam && \
+        rm {output.bam}.unsorted.bam
+        """
 
 rule make_fragments:
     input:
@@ -83,11 +97,15 @@ rule make_fragments:
         fragments="results/fragments/{sample}_{sublibrary}_fragments.tsv.gz"
     container:
         config["scnado_container"]
+    resources:
+        mem="6G",
+        runtime='1h',
     shell:
         "scnado fragments "
         "--bam {input.bam} "
         "--output {output.fragments} "
-        "--barcode-regex '^[^|]+\\|(?P<barcode>[ACGT-]+)$' "
+        "--barcode-regex '^[^|]+\|(?P<barcode>[ACGT-]+)\|'"
+        "--umi-regex '|(?P<UMI>[ATGC]+)$'"
         "--shift-plus 4 --shift-minus -5"
 
 rule process_cat:
@@ -111,3 +129,6 @@ rule export_coverage:
         "docker://quay.io/biocontainers/snapatac2:2.8.0--py311h284d45d_1"
     script:
         "scripts/export_coverage.py"
+    resources:
+        mem="12G",
+        runtime='4h',

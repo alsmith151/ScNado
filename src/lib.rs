@@ -42,11 +42,12 @@ mod python_bindings {
         .map_err(|e| PyRuntimeError::new_err(format!("Barcode finding failed: {}", e)))
     }
 
-    #[pyfunction(signature = (bam, output, barcode_regex=None, shift_plus=0, shift_minus=0, fragment_length_extension=None))]
+    #[pyfunction(signature = (bam, output, barcode_regex=None, umi_regex=None, shift_plus=0, shift_minus=0, fragment_length_extension=None))]
     pub fn fragments(
         bam: String,
         output: String,
         barcode_regex: Option<String>,
+        umi_regex: Option<String>,
         shift_plus: i64,
         shift_minus: i64,
         fragment_length_extension: Option<usize>,
@@ -54,10 +55,19 @@ mod python_bindings {
         let bam_path = PathBuf::from(bam);
         let output_path = PathBuf::from(output);
 
-        let regex = if let Some(pattern) = barcode_regex {
+        let b_regex = if let Some(pattern) = barcode_regex {
             Some(
                 regex::Regex::new(&pattern)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid regex: {}", e)))?,
+                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid barcode regex: {}", e)))?,
+            )
+        } else {
+            None
+        };
+
+        let u_regex = if let Some(pattern) = umi_regex {
+            Some(
+                regex::Regex::new(&pattern)
+                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid umi regex: {}", e)))?,
             )
         } else {
             None
@@ -65,7 +75,8 @@ mod python_bindings {
 
         crate::fragments::run(
             &bam_path,
-            regex,
+            b_regex,
+            u_regex,
             &output_path,
             shift_plus,
             shift_minus,

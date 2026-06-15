@@ -3,7 +3,7 @@ use log::{info, warn};
 use noodles::bam;
 use noodles::sam::alignment::record::data::field::tag;
 use noodles::sam::alignment::record::data::field::value::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -19,18 +19,90 @@ fn get_barcode_from_tag(record: &bam::record::Record) -> Option<String> {
     }
 }
 
-fn get_barcode_from_read_name(
+fn extract_barcode_and_umi(
     record: &bam::record::Record,
-    regex: &regex::Regex,
-) -> Option<String> {
-    let read_name = record.name()?.to_string();
-    let caps = regex.captures(&read_name)?;
-    caps.get(1).map(|m| m.as_str().to_string())
+    barcode_regex: Option<&regex::Regex>,
+    umi_regex: Option<&regex::Regex>,
+) -> (Option<String>, Option<String>) {
+    let read_name = record.name().map(|n| n.to_string());
+    
+    let mut barcode = None;
+    let mut umi = None;
+
+    if let Some(rx) = barcode_regex {
+        if let Some(name) = &read_name {
+            if let Some(caps) = rx.captures(name) {
+                barcode = caps.name("barcode").map(|m| m.as_str().to_string())
+                    .or_else(|| caps.get(1).map(|m| m.as_str().to_string()));
+                
+                if umi_regex.is_none() {
+                     umi = caps.name("UMI").or(caps.name("umi")).map(|m| m.as_str().to_string());
+                }
+            }
+        }
+    }
+
+    if let Some(rx) = umi_regex {
+        if let Some(name) = &read_name {
+            if let Some(caps) = rx.captures(name) {
+                umi = caps.name("UMI").or(caps.name("umi")).map(|m| m.as_str().to_string())
+                    .or_else(|| caps.get(1).map(|m| m.as_str().to_string()));
+            }
+        }
+    }
+
+    if barcode.is_none() {
+        barcode = get_barcode_from_tag(record);
+    }
+
+    (barcode, umi)
+}
+
+struct FragmentCounter {
+    simple_counts: HashMap<(String, usize, usize, String), u32>,
+    umi_counts: HashMap<(String, usize, usize, String), HashSet<String>>,
+    use_umi: bool,
+}
+
+impl FragmentCounter {
+    fn new(use_umi: bool) -> Self {
+        Self {
+            simple_counts: HashMap::new(),
+            umi_counts: HashMap::new(),
+            use_umi,
+        }
+    }
+
+    fn add(&mut self, key: (String, usize, usize, String), umi: Option<String>) {
+        if self.use_umi {
+            // If UMI is missing, treat it as empty string (collapsing all missing-UMI reads at this locus)
+            let u = umi.unwrap_or_default();
+            self.umi_counts.entry(key).or_default().insert(u);
+        } else {
+            *self.simple_counts.entry(key).or_default() += 1;
+        }
+    }
+
+    fn write_results<W: Write>(&self, writer: &mut W) -> Result<()> {
+        if self.use_umi {
+            for ((chrom, start, end, barcode), umis) in &self.umi_counts {
+                if !umis.is_empty() {
+                    writeln!(writer, "{}\t{}\t{}\t{}\t{}", chrom, start, end, barcode, umis.len())?;
+                }
+            }
+        } else {
+            for ((chrom, start, end, barcode), count) in &self.simple_counts {
+                writeln!(writer, "{}\t{}\t{}\t{}\t{}", chrom, start, end, barcode, count)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn run<P: AsRef<Path>>(
     bam_file: P,
-    barcode_extraction_regex: Option<regex::Regex>,
+    barcode_regex: Option<regex::Regex>,
+    umi_regex: Option<regex::Regex>,
     outfile: P,
     shift_plus: i64,
     shift_minus: i64,
@@ -49,7 +121,13 @@ pub fn run<P: AsRef<Path>>(
     }
 
     let mut writer = std::io::BufWriter::new(File::create(outfile)?);
-    let mut fragments = HashMap::new();
+    
+    // Determine use_umi
+    let use_umi = umi_regex.is_some() || barcode_regex.as_ref().map_or(false, |r| {
+        r.capture_names().any(|n| n == Some("UMI") || n == Some("umi"))
+    });
+    
+    let mut counter = FragmentCounter::new(use_umi);
 
     for (i, result) in reader.records().enumerate() {
         if let Some(check) = check_cancel {
@@ -61,11 +139,8 @@ pub fn run<P: AsRef<Path>>(
         if record.flags().is_unmapped() {
             continue;
         }
-        let barcode = if let Some(regex) = &barcode_extraction_regex {
-            get_barcode_from_read_name(&record, regex)
-        } else {
-            get_barcode_from_tag(&record)
-        };
+        
+        let (barcode, umi) = extract_barcode_and_umi(&record, barcode_regex.as_ref(), umi_regex.as_ref());
 
         if barcode.is_none() {
             warn!(
@@ -128,24 +203,10 @@ pub fn run<P: AsRef<Path>>(
             continue;
         }
 
-        fragments
-            .entry((
-                chrom.clone(),
-                frag_start as usize,
-                frag_end as usize,
-                barcode.clone(),
-            ))
-            .and_modify(|c| *c += 1)
-            .or_insert(1);
+        counter.add((chrom, frag_start as usize, frag_end as usize, barcode), umi);
     }
 
-    for ((chrom, start, end, barcode), count) in fragments.into_iter() {
-        writeln!(
-            writer,
-            "{}\t{}\t{}\t{}\t{}",
-            chrom, start, end, barcode, count
-        )?;
-    }
+    counter.write_results(&mut writer)?;
 
     Ok(())
 }
