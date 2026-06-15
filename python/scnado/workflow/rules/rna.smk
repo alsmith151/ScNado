@@ -89,7 +89,7 @@ rule process_rna:
     message:
         "Processing RNA data for {wildcards.sample}"
     container:
-        "docker://quay.io/biocontainers/scanpy:1.10.4--pyhdfd78af_0"
+        CONFIG.scnado_container
     resources:
         mem=lambda wc, attempt: define_memory_requested(initial_value=32, attempts=attempt),
         runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),

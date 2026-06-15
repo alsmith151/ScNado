@@ -129,7 +129,7 @@ rule process_cat:
     message:
         "Processing CAT data for {wildcards.sample}"
     container:
-        "docker://quay.io/biocontainers/snapatac2:2.8.0--py311h284d45d_1"
+        CONFIG.scnado_container
     resources:
         mem=lambda wc, attempt: define_memory_requested(initial_value=32, attempts=attempt),
         runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
@@ -149,7 +149,7 @@ rule export_coverage:
     message:
         "Exporting coverage for {wildcards.sample}"
     container:
-        "docker://quay.io/biocontainers/snapatac2:2.8.0--py311h284d45d_1"
+        CONFIG.scnado_container
     resources:
         mem=lambda wc, attempt: define_memory_requested(initial_value=12, attempts=attempt),
         runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
