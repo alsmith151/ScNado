@@ -2,17 +2,15 @@ import importlib.resources as pkg_resources
 import re
 import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
-import jinja2
 import typer
 from loguru import logger
 
 from . import data as _data_pkg
-from .cat import process_cat, analyze_cat_dataset
-from .multiome import integrate_cat_rna
-from .rna import process_rna
+from . import workflow as _workflow_pkg
 
 app = typer.Typer(help="scnado: Single-cell CUT&TAG and RNA-seq analysis pipeline")
 workflow_app = typer.Typer(help="Workflow management")
@@ -89,6 +87,7 @@ def _load_seqnado_genomes() -> dict:
 
 
 def _render_config(template_vars: dict, outfile: Path) -> None:
+    import jinja2
     template_path = str(pkg_resources.files(_data_pkg).joinpath("config_template.yaml.j2"))
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(Path(template_path).parent)))
     tmpl = env.get_template("config_template.yaml.j2")
@@ -96,21 +95,10 @@ def _render_config(template_vars: dict, outfile: Path) -> None:
     outfile.write_text(tmpl.render(**template_vars))
 
 
-@workflow_app.command()
-def init(
-    outdir: str = typer.Option(
-        ".",
-        "--outdir",
-        "-o",
-        help="Project root directory (default: current directory)",
-    ),
-) -> None:
-    """Interactively create config/config.yaml and config/samples.tsv."""
+def _prompt_config(outdir: str) -> None:
+    """Interactively create config/config.yaml."""
     from seqnado.config.user_input import get_user_input
 
-    typer.echo("=== scnado project initialisation ===\n")
-
-    # Genome selection — try the seqnado registry first
     genomes = _load_seqnado_genomes()
     if not genomes:
         typer.echo(
@@ -121,11 +109,7 @@ def init(
         raise typer.Exit(code=1)
 
     available = list(genomes.keys())
-    genome_name = get_user_input(
-        "Genome?",
-        choices=available,
-        default=available[0],
-    )
+    genome_name = get_user_input("Genome?", choices=available, default=available[0])
     gdata = genomes[genome_name]
 
     bowtie2_prefix = gdata.get("bt2_index", "")
@@ -134,12 +118,16 @@ def init(
     chromosome_sizes = gdata.get("chromosome_sizes", None)
     blacklist = gdata.get("blacklist", None)
 
-    samples_path = get_user_input("Samples TSV path?", default="config/samples.tsv")
+    metadata_path = get_user_input("Metadata CSV path?", default="config/metadata.csv")
     barcode_mismatches = int(get_user_input("Barcode mismatches?", default="2"))
     barcode_csv = get_user_input("Custom barcode CSV? (leave blank for default)", required=False) or None
 
     enable_cat = get_user_input("Enable CAT analysis?", default="yes", is_boolean=True)
     enable_rna = get_user_input("Enable RNA analysis?", default="no", is_boolean=True)
+
+    star_index = None
+    if enable_rna:
+        star_index = get_user_input("STAR genome directory?", required=True) or None
 
     cat_bin_size = int(get_user_input("CAT bin size?", default="5000"))
     cat_n_features = int(get_user_input("CAT n features?", default="50000"))
@@ -151,7 +139,7 @@ def init(
     )
 
     template_vars = dict(
-        samples=samples_path,
+        metadata=metadata_path,
         barcode_mismatches=barcode_mismatches,
         barcode_csv=barcode_csv,
         genome_name=genome_name,
@@ -160,6 +148,7 @@ def init(
         fasta=fasta,
         chromosome_sizes=chromosome_sizes,
         blacklist=blacklist,
+        star_index=star_index,
         cat_bin_size=cat_bin_size,
         cat_n_features=cat_n_features,
         rna_n_top_genes=rna_n_top_genes,
@@ -173,19 +162,193 @@ def init(
     _render_config(template_vars, config_file)
     logger.success(f"Created {config_file}")
 
-    samples_file = Path(outdir) / "config" / "samples.tsv"
-    if not samples_file.exists():
-        samples_file.write_text(
-            "sample\tsublibrary\tfastq_r1\tfastq_r2\tmodality\n"
-            "sample1\tsublib1\tfastq_files/sample1_sublib1_R1.fastq.gz\t"
-            "fastq_files/sample1_sublib1_R2.fastq.gz\tmixed\n"
-        )
-        logger.success(f"Created {samples_file}")
 
-    typer.echo(f"\nNext steps:")
-    typer.echo(f"  1. Edit {samples_file} with your sample information")
-    typer.echo(f"  2. Run 'scnado workflow run --profile <profile>' to execute the pipeline")
-    typer.echo(f"     Available profiles (from seqnado init): ls, lc, ss, sc ...")
+@workflow_app.command()
+def config(
+    outdir: str = typer.Option(
+        ".",
+        "--outdir",
+        "-o",
+        help="Project root directory (default: current directory)",
+    ),
+) -> None:
+    """Interactively create config/config.yaml for the scnado pipeline."""
+    typer.echo("=== scnado workflow config ===\n")
+    _prompt_config(outdir)
+    typer.echo("\nNext steps:")
+    typer.echo("  1. Run 'scnado workflow design <fastq_dir>' to create config/metadata.csv")
+    typer.echo("  2. Run 'scnado workflow run' to execute the pipeline")
+
+
+@workflow_app.command()
+def design(
+    fastq_dir: str = typer.Argument(
+        ".",
+        help="Directory containing FASTQ files",
+    ),
+    output: str = typer.Option(
+        "config/metadata.csv",
+        "--output",
+        "-o",
+        help="Output metadata CSV path",
+    ),
+    cat_pattern: str = typer.Option(
+        r"(?i)cat",
+        "--cat-pattern",
+        help="Regex to identify CAT FASTQ files by filename",
+    ),
+    rna_pattern: str = typer.Option(
+        r"(?i)rna",
+        "--rna-pattern",
+        help="Regex to identify RNA FASTQ files by filename",
+    ),
+    pairing_pattern: str = typer.Option(
+        r"\d+",
+        "--pairing-pattern",
+        help=(
+            "Regex to extract the sublibrary key from each filename stem. "
+            "The first capture group (or full match if no groups) is used to pair "
+            "CAT and RNA files that belong to the same sublibrary. "
+            "Default '\\d+' extracts the first number, e.g. 'scCAT1' and 'scRNA1' both yield '1'."
+        ),
+    ),
+    sample: Optional[str] = typer.Option(
+        None,
+        "--sample",
+        "-s",
+        help="Assign all sublibraries to this sample name (skips interactive prompt)",
+    ),
+) -> None:
+    """Generate config/metadata.csv linking CAT and RNA FASTQ files by sublibrary.
+
+    Scans FASTQ_DIR for *.fastq.gz files, classifies them as CAT or RNA using
+    --cat-pattern / --rna-pattern, then pairs them by the sublibrary key extracted
+    with --pairing-pattern. Produces a wide-format CSV with one row per sublibrary:
+
+        sample, sublibrary, cat_r1, cat_r2, rna_r1, rna_r2
+    """
+    import pandas as pd
+
+    fastq_path = Path(fastq_dir).resolve()
+    if not fastq_path.exists():
+        logger.error(f"Directory not found: {fastq_path}")
+        raise typer.Exit(code=1)
+
+    fastq_files = sorted(fastq_path.glob("*.fastq.gz"))
+    if not fastq_files:
+        logger.error(f"No *.fastq.gz files found in {fastq_path}")
+        raise typer.Exit(code=1)
+
+    # Validate user-supplied patterns up front
+    for name, pat in [("--cat-pattern", cat_pattern), ("--rna-pattern", rna_pattern), ("--pairing-pattern", pairing_pattern)]:
+        try:
+            re.compile(pat)
+        except re.error as e:
+            logger.error(f"Invalid regex for {name}: {e}")
+            raise typer.Exit(code=1)
+
+    # Classify each file: classified[sublib_key][modality][read_num] = Path
+    classified: dict[str, dict[str, dict[int, Path]]] = defaultdict(
+        lambda: {"cat": {}, "rna": {}}
+    )
+    skipped = []
+
+    for f in fastq_files:
+        stem = f.name.removesuffix(".gz").removesuffix(".fastq")
+
+        # Extract read number from _R1/_R2 suffix
+        read_match = re.search(r"_R([12])(?:_\d+)?$", stem)
+        if read_match is None:
+            logger.warning(f"Cannot detect read number in '{f.name}', skipping")
+            skipped.append(f.name)
+            continue
+        read_num = int(read_match.group(1))
+
+        # Classify modality
+        if re.search(cat_pattern, stem):
+            modality = "cat"
+        elif re.search(rna_pattern, stem):
+            modality = "rna"
+        else:
+            logger.warning(f"Cannot classify '{f.name}' as CAT or RNA, skipping")
+            skipped.append(f.name)
+            continue
+
+        # Extract sublibrary key via pairing_pattern
+        key_match = re.search(pairing_pattern, stem)
+        if key_match is None:
+            logger.warning(f"Pairing pattern '{pairing_pattern}' did not match '{f.name}', skipping")
+            skipped.append(f.name)
+            continue
+        sublib_key = key_match.group(1) if key_match.lastindex else key_match.group(0)
+
+        classified[sublib_key][modality][read_num] = f
+
+    if not classified:
+        logger.error("No FASTQ files could be classified. Check --cat-pattern, --rna-pattern, and --pairing-pattern.")
+        raise typer.Exit(code=1)
+
+    # Report detections
+    typer.echo(f"\nScanned {fastq_path}")
+    typer.echo(f"Found {len(fastq_files)} FASTQ file(s), {len(classified)} sublibrary key(s) detected:\n")
+    for key in sorted(classified.keys()):
+        cat = classified[key]["cat"]
+        rna = classified[key]["rna"]
+        cat_r1 = cat.get(1, Path("MISSING")).name
+        cat_r2 = cat.get(2, Path("MISSING")).name
+        rna_r1 = rna.get(1, Path("MISSING")).name
+        rna_r2 = rna.get(2, Path("MISSING")).name
+        typer.echo(f"  [{key}]  CAT: {cat_r1} / {cat_r2}   RNA: {rna_r1} / {rna_r2}")
+
+    if skipped:
+        typer.echo(f"\nSkipped {len(skipped)} file(s): {', '.join(skipped)}")
+
+    typer.echo("")
+
+    # Collect sample name assignments
+    rows = []
+    for key in sorted(classified.keys()):
+        cat = classified[key]["cat"]
+        rna = classified[key]["rna"]
+
+        if sample:
+            sname = sample
+        else:
+            sname = typer.prompt(f"Sample name for sublibrary '{key}'", default=f"sample_{key}")
+
+        rows.append({
+            "sample": sname,
+            "sublibrary": key,
+            "cat_r1": str(cat[1]) if 1 in cat else None,
+            "cat_r2": str(cat[2]) if 2 in cat else None,
+            "rna_r1": str(rna[1]) if 1 in rna else None,
+            "rna_r2": str(rna[2]) if 2 in rna else None,
+        })
+
+    df = pd.DataFrame(rows)
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    logger.success(f"Metadata saved → {output_path}")
+    typer.echo(f"\nNext step: run 'scnado workflow run' to execute the pipeline")
+
+
+@workflow_app.command(hidden=True)
+def init(
+    outdir: str = typer.Option(
+        ".",
+        "--outdir",
+        "-o",
+        help="Project root directory (default: current directory)",
+    ),
+) -> None:
+    """Deprecated: use 'scnado workflow config' instead."""
+    logger.warning("'scnado workflow init' is deprecated. Use 'scnado workflow config' instead.")
+    typer.echo("=== scnado project initialisation ===\n")
+    _prompt_config(outdir)
+    typer.echo("\nNext steps:")
+    typer.echo("  1. Run 'scnado workflow design <fastq_dir>' to create config/metadata.csv")
+    typer.echo("  2. Run 'scnado workflow run' to execute the pipeline")
 
 
 @workflow_app.command()
@@ -218,16 +381,22 @@ def run(
     ),
 ) -> None:
     """Run the Snakemake pipeline."""
-    base_dir = Path(workflow_dir) if workflow_dir else Path.cwd()
+    base_dir = Path(workflow_dir).resolve() if workflow_dir else Path.cwd()
 
-    snakefile = base_dir / "workflow" / "Snakefile"
-    if not snakefile.exists():
-        logger.error(f"Snakefile not found at {snakefile}. Make sure you're in the project root or specify --workflow-dir")
-        raise typer.Exit(code=1)
+    # Prefer a local workflow/Snakefile; fall back to the packaged one
+    local_snakefile = base_dir / "workflow" / "Snakefile"
+    if local_snakefile.exists():
+        snakefile = local_snakefile
+    else:
+        snakefile = Path(str(pkg_resources.files(_workflow_pkg).joinpath("Snakefile")))
+        if not snakefile.exists():
+            logger.error("Snakefile not found locally or in the installed package.")
+            raise typer.Exit(code=1)
+        logger.info(f"Using packaged Snakefile: {snakefile}")
 
     config_file = base_dir / "config" / "config.yaml"
     if not config_file.exists():
-        logger.error(f"config.yaml not found at {config_file}. Run 'scnado workflow init' first.")
+        logger.error(f"config.yaml not found at {config_file}. Run 'scnado workflow config' first.")
         raise typer.Exit(code=1)
 
     cmd = [

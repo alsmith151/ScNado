@@ -1,0 +1,74 @@
+import pandas as pd
+from pathlib import Path
+
+from scnado import get_default_barcode_csv, get_barcode_whitelists
+from scnado.config import ScnadoConfig
+from seqnado.workflow.helpers.common import define_memory_requested, define_time_requested
+
+configfile: "config/config.yaml"
+
+CONFIG = ScnadoConfig.from_yaml("config/config.yaml")
+metadata = pd.read_csv(CONFIG.metadata).set_index(["sample", "sublibrary"], drop=False)
+
+
+def get_barcode_csv(wildcards):
+    return str(CONFIG.barcode_csv) if CONFIG.barcode_csv else get_default_barcode_csv()
+
+
+def get_cat_r1(wildcards):
+    return metadata.loc[(wildcards.sample, wildcards.sublibrary), "cat_r1"]
+
+
+def get_cat_r2(wildcards):
+    return metadata.loc[(wildcards.sample, wildcards.sublibrary), "cat_r2"]
+
+
+def get_rna_r1(wildcards):
+    return metadata.loc[(wildcards.sample, wildcards.sublibrary), "rna_r1"]
+
+
+def get_rna_r2(wildcards):
+    return metadata.loc[(wildcards.sample, wildcards.sublibrary), "rna_r2"]
+
+
+def get_fragments_for_sample(wildcards):
+    sublibs = metadata.loc[metadata["sample"] == wildcards.sample, "sublibrary"]
+    return expand(
+        "results/fragments/{sample}_{sublibrary}_fragments.tsv.gz",
+        sample=wildcards.sample,
+        sublibrary=sublibs,
+    )
+
+
+def get_star_counts_for_sample(wildcards):
+    sublibs = metadata.loc[metadata["sample"] == wildcards.sample, "sublibrary"]
+    return expand(
+        "results/star_rna/{sample}_{sublibrary}/Solo.out",
+        sample=wildcards.sample,
+        sublibrary=sublibs,
+    )
+
+
+def get_final_outputs():
+    outputs = []
+
+    if CONFIG.enable_integration and CONFIG.enable_cat and CONFIG.enable_rna:
+        outputs.extend(expand("results/integrated/{sample}.h5mu", sample=metadata["sample"].unique()))
+
+    if CONFIG.enable_cat:
+        outputs.extend(expand("results/processed_cat/{sample}.h5ad", sample=metadata["sample"].unique()))
+        outputs.extend(expand("results/coverage/{sample}/", sample=metadata["sample"].unique()))
+
+    if CONFIG.enable_rna:
+        outputs.extend(expand("results/processed_rna/{sample}.h5ad", sample=metadata["sample"].unique()))
+
+    return outputs
+
+
+rule all:
+    input:
+        get_final_outputs()
+
+
+include: "rules/cat.smk"
+include: "rules/rna.smk"

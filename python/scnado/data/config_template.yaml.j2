@@ -1,4 +1,4 @@
-samples: "{{ samples }}"
+metadata: "{{ metadata }}"
 barcode_mismatches: {{ barcode_mismatches }}
 {% if barcode_csv %}
 barcode_csv: "{{ barcode_csv }}"
@@ -20,6 +20,10 @@ genome:
 {% endif %}
 {% if blacklist %}
   blacklist: "{{ blacklist }}"
+{% endif %}
+
+{% if star_index %}
+star_index: "{{ star_index }}"
 {% endif %}
 
 cat:

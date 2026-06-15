@@ -1,62 +1,41 @@
-import pandas as pd
-from pathlib import Path
-
-from scnado import get_default_barcode_csv
-from scnado.config import ScnadoConfig
 from seqnado.workflow.helpers.common import define_memory_requested, define_time_requested
 
-configfile: "config/config.yaml"
 
-CONFIG = ScnadoConfig.from_yaml("config/config.yaml")
-samples = pd.read_csv(CONFIG.samples, sep="\t").set_index(["sample", "sublibrary"], drop=False)
-
-
-def get_barcode_csv(wildcards):
-    return str(CONFIG.barcode_csv) if CONFIG.barcode_csv else get_default_barcode_csv()
-
-
-def get_fastq_r1(wildcards):
-    return samples.loc[(wildcards.sample, wildcards.sublibrary), "fastq_r1"]
-
-
-def get_fastq_r2(wildcards):
-    return samples.loc[(wildcards.sample, wildcards.sublibrary), "fastq_r2"]
-
-
-def get_fragments_for_sample(wildcards):
-    sublibs = samples.loc[samples["sample"] == wildcards.sample, "sublibrary"]
-    return expand(
-        "results/fragments/{sample}_{sublibrary}_fragments.tsv.gz",
-        sample=wildcards.sample,
-        sublibrary=sublibs,
-    )
-
-
-def get_final_outputs():
-    outputs = []
-
-    if CONFIG.enable_integration and CONFIG.enable_cat and CONFIG.enable_rna:
-        outputs.extend(expand("results/integrated/{sample}.h5mu", sample=samples["sample"].unique()))
-
-    if CONFIG.enable_cat:
-        outputs.extend(expand("results/processed_cat/{sample}.h5ad", sample=samples["sample"].unique()))
-        outputs.extend(expand("results/coverage/{sample}/", sample=samples["sample"].unique()))
-
-    if CONFIG.enable_rna:
-        outputs.extend(expand("results/processed_rna/{sample}.h5ad", sample=samples["sample"].unique()))
-
-    return outputs
-
-
-rule all:
+rule trim_cat:
     input:
-        get_final_outputs()
+        r1=get_cat_r1,
+        r2=get_cat_r2,
+    output:
+        r1=temp("results/trimmed_cat/{sample}_{sublibrary}_val_1.fq.gz"),
+        r2=temp("results/trimmed_cat/{sample}_{sublibrary}_val_2.fq.gz"),
+    log:
+        "logs/trim_cat/{sample}_{sublibrary}.log",
+    benchmark:
+        "benchmarks/trim_cat/{sample}_{sublibrary}.tsv"
+    message:
+        "Trimming CAT reads for {wildcards.sample} / {wildcards.sublibrary}"
+    container:
+        "docker://ghcr.io/felixkrueger/trimgalore:latest"
+    threads: 4
+    resources:
+        mem=lambda wc, attempt: define_memory_requested(initial_value=4, attempts=attempt),
+        runtime=lambda wc, attempt: define_time_requested(initial_value=2, attempts=attempt),
+    params:
+        outdir="results/trimmed_cat/",
+    shell:
+        """
+        trim_galore --poly_g -j {threads} --trim-n --2colour 20 --nextera --paired \
+          --basename {wildcards.sample}_{wildcards.sublibrary} \
+          --output_dir {params.outdir} \
+          {input.r1} {input.r2} \
+          > {log} 2>&1
+        """
 
 
 rule find_barcodes:
     input:
-        r1=get_fastq_r1,
-        r2=get_fastq_r2,
+        r1="results/trimmed_cat/{sample}_{sublibrary}_val_1.fq.gz",
+        r2="results/trimmed_cat/{sample}_{sublibrary}_val_2.fq.gz",
         barcodes=get_barcode_csv,
     output:
         r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
@@ -155,7 +134,7 @@ rule process_cat:
         mem=lambda wc, attempt: define_memory_requested(initial_value=32, attempts=attempt),
         runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
     script:
-        "scripts/process_cat.py"
+        "../scripts/process_cat.py"
 
 
 rule export_coverage:
@@ -175,4 +154,4 @@ rule export_coverage:
         mem=lambda wc, attempt: define_memory_requested(initial_value=12, attempts=attempt),
         runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
     script:
-        "scripts/export_coverage.py"
+        "../scripts/export_coverage.py"

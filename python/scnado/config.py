@@ -16,10 +16,11 @@ class RNAConfig(BaseModel):
 
 
 class ScnadoConfig(BaseModel):
-    samples: Path
+    metadata: Path
     barcode_csv: Optional[Path] = None
     barcode_mismatches: int = 2
     genome: GenomeConfig
+    star_index: Optional[Path] = None
     cat: CATConfig = Field(default_factory=CATConfig)
     rna: RNAConfig = Field(default_factory=RNAConfig)
     enable_cat: bool = True
