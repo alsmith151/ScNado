@@ -1,4 +1,6 @@
 use anyhow::Result;
+use gzp::deflate::Gzip;
+use gzp::par::compress::ParCompressBuilder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use log::info;
 use noodles::fastq;
@@ -6,15 +8,15 @@ use noodles::fastq::record::Definition;
 use polars::prelude::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::env;
 use std::fs::File;
 use std::hash::Hash;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
-use gzp::par::compress::{ParCompressBuilder, Compression};
-use gzp::deflate::Gzip;
-use std::env;
 
 const BATCH_SIZE: usize = 5000;
+
+type ProcessedRecord = Result<(Option<fastq::Record>, Option<fastq::Record>, usize)>;
 
 #[derive(Debug, Default)]
 struct BarcodeStats {
@@ -322,6 +324,7 @@ fn collate_barcodes(
 /// * `n_missmatches` - Optional number of allowed mismatches.
 /// * `ignore_ns` - Optional flag to ignore 'N' characters in barcode matching.
 /// * `allow_missing_barcodes` - Optional flag to allow missing barcodes.
+#[allow(clippy::too_many_arguments)]
 pub fn run<P: AsRef<Path>>(
     read1: P,
     read2: P,
@@ -384,7 +387,7 @@ pub fn run<P: AsRef<Path>>(
             break;
         }
 
-        let processed: Vec<Result<(Option<fastq::Record>, Option<fastq::Record>, usize)>> = batch
+        let processed: Vec<ProcessedRecord> = batch
             .into_par_iter()
             .map(|(record_r1, record_r2)| {
                 let seq_r2 = std::str::from_utf8(record_r2.sequence())?;
@@ -401,13 +404,16 @@ pub fn run<P: AsRef<Path>>(
                     BarcodeType::BC4,
                 ] {
                     let bc_seq = extract_barcode(seq_r2, bc_type)?;
-                    if let Some(valid_barcodes) = barcode_map.get(bc_type) {
-                        if let Some((best_match, distance)) =
-                            identify_best_barcode(&bc_seq, valid_barcodes, n_missmatches, ignore_ns)?
-                        {
-                            barcodes_matched.insert((*bc_type).clone(), (best_match, distance));
-                            num_found += 1;
-                        }
+                    if let Some(valid_barcodes) = barcode_map.get(bc_type)
+                        && let Some((best_match, distance)) = identify_best_barcode(
+                            &bc_seq,
+                            valid_barcodes,
+                            n_missmatches,
+                            ignore_ns,
+                        )?
+                    {
+                        barcodes_matched.insert((*bc_type).clone(), (best_match, distance));
+                        num_found += 1;
                     }
                 }
 

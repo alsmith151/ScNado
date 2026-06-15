@@ -7,13 +7,12 @@ use pyo3::{prelude::*, wrap_pyfunction};
 #[cfg(feature = "extension-module")]
 mod python_bindings {
     use super::*;
-    use pyo3::{PyResult, exceptions::PyRuntimeError};
+    use pyo3::{PyResult, Python, exceptions::PyRuntimeError};
     use std::path::PathBuf;
 
     fn check_signals() -> anyhow::Result<()> {
-        Python::with_gil(|py| {
-            py.check_signals().map_err(|e| anyhow::anyhow!(e))
-        })
+        // Python::with_gil(|py| py.check_signals().map_err(|e| anyhow::anyhow!(e)))
+        Python::attach(|py| py.check_signals().map_err(|e| anyhow::anyhow!(e)))
     }
 
     #[pyfunction]
@@ -55,14 +54,14 @@ mod python_bindings {
         let bam_path = PathBuf::from(bam);
         let output_path = PathBuf::from(output);
 
-        let b_regex = if let Some(pattern) = barcode_regex {
-            Some(
-                regex::Regex::new(&pattern)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid barcode regex: {}", e)))?,
-            )
-        } else {
-            None
-        };
+        let b_regex =
+            if let Some(pattern) = barcode_regex {
+                Some(regex::Regex::new(&pattern).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Invalid barcode regex: {}", e))
+                })?)
+            } else {
+                None
+            };
 
         let u_regex = if let Some(pattern) = umi_regex {
             Some(

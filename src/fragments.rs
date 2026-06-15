@@ -25,30 +25,36 @@ fn extract_barcode_and_umi(
     umi_regex: Option<&regex::Regex>,
 ) -> (Option<String>, Option<String>) {
     let read_name = record.name().map(|n| n.to_string());
-    
+
     let mut barcode = None;
     let mut umi = None;
 
-    if let Some(rx) = barcode_regex {
-        if let Some(name) = &read_name {
-            if let Some(caps) = rx.captures(name) {
-                barcode = caps.name("barcode").map(|m| m.as_str().to_string())
-                    .or_else(|| caps.get(1).map(|m| m.as_str().to_string()));
-                
-                if umi_regex.is_none() {
-                     umi = caps.name("UMI").or(caps.name("umi")).map(|m| m.as_str().to_string());
-                }
-            }
+    if let Some(rx) = barcode_regex
+        && let Some(name) = &read_name
+        && let Some(caps) = rx.captures(name)
+    {
+        barcode = caps
+            .name("barcode")
+            .map(|m| m.as_str().to_string())
+            .or_else(|| caps.get(1).map(|m| m.as_str().to_string()));
+
+        if umi_regex.is_none() {
+            umi = caps
+                .name("UMI")
+                .or(caps.name("umi"))
+                .map(|m| m.as_str().to_string());
         }
     }
 
-    if let Some(rx) = umi_regex {
-        if let Some(name) = &read_name {
-            if let Some(caps) = rx.captures(name) {
-                umi = caps.name("UMI").or(caps.name("umi")).map(|m| m.as_str().to_string())
-                    .or_else(|| caps.get(1).map(|m| m.as_str().to_string()));
-            }
-        }
+    if let Some(rx) = umi_regex
+        && let Some(name) = &read_name
+        && let Some(caps) = rx.captures(name)
+    {
+        umi = caps
+            .name("UMI")
+            .or(caps.name("umi"))
+            .map(|m| m.as_str().to_string())
+            .or_else(|| caps.get(1).map(|m| m.as_str().to_string()));
     }
 
     if barcode.is_none() {
@@ -87,18 +93,31 @@ impl FragmentCounter {
         if self.use_umi {
             for ((chrom, start, end, barcode), umis) in &self.umi_counts {
                 if !umis.is_empty() {
-                    writeln!(writer, "{}\t{}\t{}\t{}\t{}", chrom, start, end, barcode, umis.len())?;
+                    writeln!(
+                        writer,
+                        "{}\t{}\t{}\t{}\t{}",
+                        chrom,
+                        start,
+                        end,
+                        barcode,
+                        umis.len()
+                    )?;
                 }
             }
         } else {
             for ((chrom, start, end, barcode), count) in &self.simple_counts {
-                writeln!(writer, "{}\t{}\t{}\t{}\t{}", chrom, start, end, barcode, count)?;
+                writeln!(
+                    writer,
+                    "{}\t{}\t{}\t{}\t{}",
+                    chrom, start, end, barcode, count
+                )?;
             }
         }
         Ok(())
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run<P: AsRef<Path>>(
     bam_file: P,
     barcode_regex: Option<regex::Regex>,
@@ -121,26 +140,29 @@ pub fn run<P: AsRef<Path>>(
     }
 
     let mut writer = std::io::BufWriter::new(File::create(outfile)?);
-    
+
     // Determine use_umi
-    let use_umi = umi_regex.is_some() || barcode_regex.as_ref().map_or(false, |r| {
-        r.capture_names().any(|n| n == Some("UMI") || n == Some("umi"))
-    });
-    
+    let use_umi = umi_regex.is_some()
+        || barcode_regex.as_ref().is_some_and(|r| {
+            r.capture_names()
+                .any(|n| n == Some("UMI") || n == Some("umi"))
+        });
+
     let mut counter = FragmentCounter::new(use_umi);
 
     for (i, result) in reader.records().enumerate() {
-        if let Some(check) = check_cancel {
-            if i % 10000 == 0 {
-                check()?;
-            }
+        if let Some(check) = check_cancel
+            && i % 10000 == 0
+        {
+            check()?;
         }
         let record = result?;
         if record.flags().is_unmapped() {
             continue;
         }
-        
-        let (barcode, umi) = extract_barcode_and_umi(&record, barcode_regex.as_ref(), umi_regex.as_ref());
+
+        let (barcode, umi) =
+            extract_barcode_and_umi(&record, barcode_regex.as_ref(), umi_regex.as_ref());
 
         if barcode.is_none() {
             warn!(
@@ -203,7 +225,10 @@ pub fn run<P: AsRef<Path>>(
             continue;
         }
 
-        counter.add((chrom, frag_start as usize, frag_end as usize, barcode), umi);
+        counter.add(
+            (chrom, frag_start as usize, frag_end as usize, barcode),
+            umi,
+        );
     }
 
     counter.write_results(&mut writer)?;
