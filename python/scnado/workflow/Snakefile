@@ -8,7 +8,18 @@ from seqnado.workflow.helpers.common import define_memory_requested, define_time
 configfile: "config/config.yaml"
 
 CONFIG = ScnadoConfig.from_yaml("config/config.yaml")
-metadata = pd.read_csv(CONFIG.metadata).set_index(["sample", "sublibrary"], drop=False)
+metadata = pd.read_csv(CONFIG.metadata, dtype={"sublibrary": str}).set_index(["sample", "sublibrary"], drop=False)
+
+_path_cols = [c for c in ["cat_r1", "cat_r2", "rna_r1", "rna_r2"] if c in metadata.columns]
+for _col in _path_cols:
+    for _val in metadata[_col].dropna():
+        try:
+            _val.encode("ascii")
+        except UnicodeEncodeError:
+            raise ValueError(
+                f"Non-ASCII characters in metadata column '{_col}': {_val!r}\n"
+                "Check your metadata CSV for full-width Unicode characters (e.g. from copy-pasting)."
+            )
 
 
 def get_barcode_csv(wildcards):
@@ -72,3 +83,4 @@ rule all:
 
 include: "rules/cat.smk"
 include: "rules/rna.smk"
+include: "rules/integrate.smk"

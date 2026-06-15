@@ -326,6 +326,21 @@ def design(
         })
 
     df = pd.DataFrame(rows)
+
+    path_cols = ["cat_r1", "cat_r2", "rna_r1", "rna_r2"]
+    bad = []
+    for col in path_cols:
+        for val in df[col].dropna():
+            try:
+                val.encode("ascii")
+            except UnicodeEncodeError:
+                bad.append((col, val))
+    if bad:
+        for col, val in bad:
+            logger.error(f"Non-ASCII characters in {col}: {val!r}")
+        logger.error("Metadata not written. Check your terminal input method for full-width characters.")
+        raise typer.Exit(code=1)
+
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
