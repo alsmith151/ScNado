@@ -1,0 +1,38 @@
+samples: "{{ samples }}"
+barcode_mismatches: {{ barcode_mismatches }}
+{% if barcode_csv %}
+barcode_csv: "{{ barcode_csv }}"
+{% endif %}
+
+genome:
+  name: {{ genome_name }}
+  index:
+    type: Bowtie2
+    prefix: "{{ bowtie2_prefix }}"
+{% if gtf %}
+  gtf: "{{ gtf }}"
+{% endif %}
+{% if fasta %}
+  fasta: "{{ fasta }}"
+{% endif %}
+{% if chromosome_sizes %}
+  chromosome_sizes: "{{ chromosome_sizes }}"
+{% endif %}
+{% if blacklist %}
+  blacklist: "{{ blacklist }}"
+{% endif %}
+
+cat:
+  bin_size: {{ cat_bin_size }}
+  n_features: {{ cat_n_features }}
+
+rna:
+  n_top_genes: {{ rna_n_top_genes }}
+
+enable_cat: {{ enable_cat | lower }}
+enable_rna: {{ enable_rna | lower }}
+{% if enable_integration is not none %}
+enable_integration: {{ enable_integration | lower }}
+{% endif %}
+
+scnado_container: "{{ scnado_container }}"

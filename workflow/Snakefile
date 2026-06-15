@@ -1,63 +1,77 @@
 import pandas as pd
 from pathlib import Path
-try:
-    import scnado
-    DEFAULT_BARCODES = scnado.get_barcode_csv()
-except ImportError:
-    DEFAULT_BARCODES = "python/scnado/data/barcodes_extracted.csv"
+
+from scnado import get_default_barcode_csv
+from scnado.config import ScnadoConfig
+from seqnado.workflow.helpers.common import define_memory_requested, define_time_requested
 
 configfile: "config/config.yaml"
 
-samples = pd.read_csv(config["samples"], sep="\t").set_index(["sample", "sublibrary"], drop=False)
+CONFIG = ScnadoConfig.from_yaml("config/config.yaml")
+samples = pd.read_csv(CONFIG.samples, sep="\t").set_index(["sample", "sublibrary"], drop=False)
 
-# Configuration flags for which analyses to run
-ENABLE_CAT = config.get("enable_cat", True)
-ENABLE_RNA = config.get("enable_rna", True)
-ENABLE_INTEGRATION = config.get("enable_integration", ENABLE_CAT and ENABLE_RNA)
 
 def get_barcode_csv(wildcards):
-    return config.get("barcode_csv", DEFAULT_BARCODES)
+    return str(CONFIG.barcode_csv) if CONFIG.barcode_csv else get_default_barcode_csv()
+
 
 def get_fastq_r1(wildcards):
     return samples.loc[(wildcards.sample, wildcards.sublibrary), "fastq_r1"]
 
+
 def get_fastq_r2(wildcards):
     return samples.loc[(wildcards.sample, wildcards.sublibrary), "fastq_r2"]
 
+
+def get_fragments_for_sample(wildcards):
+    sublibs = samples.loc[samples["sample"] == wildcards.sample, "sublibrary"]
+    return expand(
+        "results/fragments/{sample}_{sublibrary}_fragments.tsv.gz",
+        sample=wildcards.sample,
+        sublibrary=sublibs,
+    )
+
+
 def get_final_outputs():
     outputs = []
-    
-    if ENABLE_INTEGRATION and ENABLE_CAT and ENABLE_RNA:
+
+    if CONFIG.enable_integration and CONFIG.enable_cat and CONFIG.enable_rna:
         outputs.extend(expand("results/integrated/{sample}.h5mu", sample=samples["sample"].unique()))
-    
-    if ENABLE_CAT:
+
+    if CONFIG.enable_cat:
         outputs.extend(expand("results/processed_cat/{sample}.h5ad", sample=samples["sample"].unique()))
         outputs.extend(expand("results/coverage/{sample}/", sample=samples["sample"].unique()))
-    
-    if ENABLE_RNA:
+
+    if CONFIG.enable_rna:
         outputs.extend(expand("results/processed_rna/{sample}.h5ad", sample=samples["sample"].unique()))
-    
+
     return outputs
+
 
 rule all:
     input:
         get_final_outputs()
 
+
 rule find_barcodes:
     input:
         r1=get_fastq_r1,
         r2=get_fastq_r2,
-        barcodes=get_barcode_csv
+        barcodes=get_barcode_csv,
     output:
         r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
-        r2="results/barcoded/{sample}_{sublibrary}_R2.fastq.gz"
+        r2="results/barcoded/{sample}_{sublibrary}_R2.fastq.gz",
     log:
-        "logs/find_barcodes/{sample}_{sublibrary}.log"
+        "logs/find_barcodes/{sample}_{sublibrary}.log",
+    benchmark:
+        "benchmarks/find_barcodes/{sample}_{sublibrary}.tsv"
+    message:
+        "Finding barcodes for {wildcards.sample} / {wildcards.sublibrary}"
     container:
-        config["scnado_container"]
+        CONFIG.scnado_container
     resources:
-        mem="1G",
-        runtime='4h',
+        mem=lambda wc, attempt: define_memory_requested(initial_value=1, attempts=attempt),
+        runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
     threads: 8
     shell:
         "scnado find-barcodes "
@@ -65,70 +79,100 @@ rule find_barcodes:
         "--r2 {input.r2} "
         "--barcodes {input.barcodes} "
         "--output-prefix results/barcoded/{wildcards.sample}_{wildcards.sublibrary} "
-        "--n-missmatches {config[barcode_mismatches]} "
-        "--enable-n-to-match"
-        " > {log} 2>&1"
+        "--n-missmatches {CONFIG.barcode_mismatches} "
+        "--enable-n-to-match "
+        "> {log} 2>&1"
+
 
 rule align_cat:
     input:
         r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
     output:
-        bam="results/aligned_cat/{sample}_{sublibrary}.bam"
+        bam="results/aligned_cat/{sample}_{sublibrary}.bam",
+    log:
+        "logs/align_cat/{sample}_{sublibrary}.log",
+    benchmark:
+        "benchmarks/align_cat/{sample}_{sublibrary}.tsv"
+    message:
+        "Aligning CAT reads for {wildcards.sample} / {wildcards.sublibrary}"
     container:
         "oras://ghcr.io/alsmith151/seqnado_pipeline:latest"
     threads: 8
     resources:
-        mem=lambda wc, attempt: f"{16 ** 2 * attempt}G",
-        runtime='4h',        
+        mem=lambda wc, attempt: define_memory_requested(initial_value=16, attempts=attempt),
+        runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
     params:
-        index=config["bowtie2_index"]
+        index=CONFIG.genome.index.prefix,
     shell:
         """
-        bowtie2 -p {threads} -x {params.index} -U {input.r1} | \
+        bowtie2 -p {threads} -x {params.index} -U {input.r1} 2>> {log} | \
         samtools view -@ {threads} -b - > {output.bam}.unsorted.bam && \
-        samtools sort -@ {threads} -o {output.bam} {output.bam}.unsorted.bam && \
+        samtools sort -@ {threads} -o {output.bam} {output.bam}.unsorted.bam 2>> {log} && \
         rm {output.bam}.unsorted.bam
         """
 
+
 rule make_fragments:
     input:
-        bam="results/aligned_cat/{sample}_{sublibrary}.bam"
+        bam="results/aligned_cat/{sample}_{sublibrary}.bam",
     output:
-        fragments="results/fragments/{sample}_{sublibrary}_fragments.tsv.gz"
+        fragments="results/fragments/{sample}_{sublibrary}_fragments.tsv.gz",
+    log:
+        "logs/make_fragments/{sample}_{sublibrary}.log",
+    benchmark:
+        "benchmarks/make_fragments/{sample}_{sublibrary}.tsv"
+    message:
+        "Extracting fragments for {wildcards.sample} / {wildcards.sublibrary}"
     container:
-        config["scnado_container"]
+        CONFIG.scnado_container
     resources:
-        mem="6G",
-        runtime='1h',
+        mem=lambda wc, attempt: define_memory_requested(initial_value=6, attempts=attempt),
+        runtime=lambda wc, attempt: define_time_requested(initial_value=1, attempts=attempt),
     shell:
         "scnado fragments "
         "--bam {input.bam} "
         "--output {output.fragments} "
-        "--barcode-regex '^[^|]+\|(?P<barcode>[ACGT-]+)\|'"
-        "--umi-regex '|(?P<UMI>[ATGC]+)$'"
-        "--shift-plus 4 --shift-minus -5"
+        r"--barcode-regex '^[^|]+\|(?P<barcode>[ACGT-]+)\|' "
+        r"--umi-regex '|(?P<UMI>[ATGC]+)$' "
+        "--shift-plus 4 --shift-minus -5 "
+        "> {log} 2>&1"
+
 
 rule process_cat:
     input:
-        fragments=lambda wildcards: expand("results/fragments/{sample}_{sublib}_fragments.tsv.gz", 
-                                          sample=wildcards.sample, 
-                                          sublib=samples.loc[samples["sample"] == wildcards.sample, "sublibrary"])
+        fragments=get_fragments_for_sample,
     output:
-        h5ad="results/processed_cat/{sample}.h5ad"
+        h5ad="results/processed_cat/{sample}.h5ad",
+    log:
+        "logs/process_cat/{sample}.log",
+    benchmark:
+        "benchmarks/process_cat/{sample}.tsv"
+    message:
+        "Processing CAT data for {wildcards.sample}"
     container:
         "docker://quay.io/biocontainers/snapatac2:2.8.0--py311h284d45d_1"
+    resources:
+        mem=lambda wc, attempt: define_memory_requested(initial_value=32, attempts=attempt),
+        runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
     script:
         "scripts/process_cat.py"
 
+
 rule export_coverage:
     input:
-        h5ad="results/processed_cat/{sample}.h5ad"
+        h5ad="results/processed_cat/{sample}.h5ad",
     output:
-        directory("results/coverage/{sample}/")
+        directory("results/coverage/{sample}/"),
+    log:
+        "logs/export_coverage/{sample}.log",
+    benchmark:
+        "benchmarks/export_coverage/{sample}.tsv"
+    message:
+        "Exporting coverage for {wildcards.sample}"
     container:
         "docker://quay.io/biocontainers/snapatac2:2.8.0--py311h284d45d_1"
+    resources:
+        mem=lambda wc, attempt: define_memory_requested(initial_value=12, attempts=attempt),
+        runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
     script:
         "scripts/export_coverage.py"
-    resources:
-        mem="12G",
-        runtime='4h',

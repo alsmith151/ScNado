@@ -1,22 +1,26 @@
 samples: "config/samples.tsv"
-# barcode_csv: "path/to/custom_barcodes.csv" # Optional: defaults to packaged barcodes
 barcode_mismatches: 2
+# barcode_csv: "path/to/custom_barcodes.csv"  # Optional: defaults to packaged barcodes
 
-# Analysis flags - control which analyses to run
-enable_cat: true          # Run CUT&TAG analysis
-enable_rna: true          # Run RNA analysis
-# enable_integration: true # Optional: defaults to true if both CAT and RNA enabled
+genome:
+  name: hg38
+  index:
+    type: Bowtie2
+    prefix: "reference/hg38"
+  gtf: "reference/hg38.gtf"
+  # fasta: "reference/hg38.fa"
+  # chromosome_sizes: "reference/hg38.chrom.sizes"
+  # blacklist: "reference/hg38.blacklist.bed"
 
-# Reference paths
-bowtie2_index: "reference/hg38"
-minimap2_index: "reference/hg38.fa"
-gtf_file: "reference/hg38.gtf"
+cat:
+  bin_size: 5000
+  n_features: 50000
 
-# Containers
-# Replace <username> with the actual GitHub username
-scnado_container: "docker://ghcr.io/alsmith151/scnado:latest"
+rna:
+  n_top_genes: 2000
 
-# Tool parameters
-cat_bin_size: 5000
-cat_n_features: 50000
-rna_n_top_genes: 2000
+enable_cat: true
+enable_rna: false
+# enable_integration: true  # defaults to true if both enable_cat and enable_rna are true
+
+scnado_container: "oras://ghcr.io/alsmith151/scnado:latest"
