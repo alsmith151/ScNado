@@ -135,7 +135,7 @@ def _prompt_config(outdir: str) -> None:
 
     scnado_container = get_user_input(
         "Container image?",
-        default="oras://ghcr.io/alsmith151/scnado:latest",
+        default="docker://ghcr.io/alsmith151/scnado:latest",
     )
 
     template_vars = dict(
