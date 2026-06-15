@@ -24,6 +24,8 @@ dependencies = [
 ]
 
 
+[project.optional-dependencies]
+slurm = ["snakemake-executor-plugin-slurm"]
 
 [project.scripts]
 scnado = "scnado.cli:app"
