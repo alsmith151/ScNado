@@ -140,14 +140,12 @@ fn load_barcodes<P: AsRef<Path>>(path: P) -> Result<HashMap<BarcodeType, Vec<Str
     Ok(barcode_map)
 }
 
-fn extract_barcode(sequence: &str, barcode_type: &BarcodeType) -> Result<String> {
+fn extract_barcode(sequence: &str, barcode_type: &BarcodeType) -> Option<String> {
     let range = fetch_default_barcode_ranges(barcode_type);
-
     if range.end > sequence.len() {
-        return Err(anyhow::anyhow!("Barcode range is out of bounds"));
-    };
-
-    Ok(sequence[range].to_string())
+        return None;
+    }
+    Some(sequence[range].to_string())
 }
 
 /// Identify the best matching barcode from a list of valid barcodes using Hamming distance.
@@ -333,6 +331,7 @@ pub fn run<P: AsRef<Path>>(
     n_missmatches: usize,
     ignore_ns: bool,
     allow_missing_barcodes: bool,
+    trim_r2: bool,
     check_cancel: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<()> {
     info!("Processing reads from {:?}", read1.as_ref());
@@ -345,6 +344,7 @@ pub fn run<P: AsRef<Path>>(
         "Will filter reads with missing barcodes: {}",
         !allow_missing_barcodes
     );
+    info!("Trim barcode region from R2: {}", trim_r2);
 
     let output_r1 = format!("{output_prefix}_R1.fastq.gz");
     let output_r2 = format!("{output_prefix}_R2.fastq.gz");
@@ -403,8 +403,8 @@ pub fn run<P: AsRef<Path>>(
                     BarcodeType::BC3,
                     BarcodeType::BC4,
                 ] {
-                    let bc_seq = extract_barcode(seq_r2, bc_type)?;
-                    if let Some(valid_barcodes) = barcode_map.get(bc_type)
+                    if let Some(bc_seq) = extract_barcode(seq_r2, bc_type)
+                        && let Some(valid_barcodes) = barcode_map.get(bc_type)
                         && let Some((best_match, distance)) = identify_best_barcode(
                             &bc_seq,
                             valid_barcodes,
@@ -420,27 +420,34 @@ pub fn run<P: AsRef<Path>>(
                 let cell_barcode = collate_barcodes(&barcodes_matched, allow_missing_barcodes);
 
                 if let Some(cell_barcode) = cell_barcode {
-                    let umi = extract_barcode(seq_r2, &BarcodeType::Umi)?;
+                    let umi =
+                        extract_barcode(seq_r2, &BarcodeType::Umi).unwrap_or_else(|| "N".repeat(8));
                     let new_id_for_r2 = format!("{}|{}|{}", id_r2, cell_barcode, umi);
                     let new_id_for_r1 = new_id_for_r2.replace(id_r2, id_r1);
-
-                    if record_r2.sequence().len() < 138 {
-                        return Err(anyhow::anyhow!("Read 2 sequence too short (< 138 bp)"));
-                    }
-
-                    let r2_trimmed_seq = &record_r2.sequence()[138..];
-                    let quality_scores = &record_r2.quality_scores()[138..];
 
                     let r1_record = fastq::Record::new(
                         Definition::new(new_id_for_r1, record_r1.description()),
                         record_r1.sequence(),
                         record_r1.quality_scores(),
                     );
-                    let r2_record = fastq::Record::new(
-                        Definition::new(new_id_for_r2, record_r2.description()),
-                        r2_trimmed_seq,
-                        quality_scores,
-                    );
+
+                    let r2_record = if trim_r2 {
+                        if record_r2.sequence().len() < 138 {
+                            return Ok((None, None, num_found));
+                        }
+                        fastq::Record::new(
+                            Definition::new(new_id_for_r2, record_r2.description()),
+                            &record_r2.sequence()[138..],
+                            &record_r2.quality_scores()[138..],
+                        )
+                    } else {
+                        fastq::Record::new(
+                            Definition::new(new_id_for_r2, record_r2.description()),
+                            record_r2.sequence(),
+                            record_r2.quality_scores(),
+                        )
+                    };
+
                     Ok((Some(r1_record), Some(r2_record), num_found))
                 } else {
                     Ok((None, None, num_found))

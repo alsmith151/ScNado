@@ -1,13 +1,38 @@
 from seqnado.workflow.helpers.common import define_memory_requested, define_time_requested
 
 
-rule trim_cat:
+rule find_barcodes_cat:
     input:
         r1=get_cat_r1,
         r2=get_cat_r2,
+        barcodes=get_barcode_csv,
     output:
-        r1=temp("results/trimmed_cat/{sample}_{sublibrary}_val_1.fq.gz"),
-        r2=temp("results/trimmed_cat/{sample}_{sublibrary}_val_2.fq.gz"),
+        r1=temp("results/barcoded/{sample}_{sublibrary}_R1.fastq.gz"),
+        r2=temp("results/barcoded/{sample}_{sublibrary}_R2.fastq.gz"),
+    log:
+        "logs/find_barcodes/{sample}_{sublibrary}.log",
+    benchmark:
+        "benchmarks/find_barcodes/{sample}_{sublibrary}.tsv"
+    message:
+        "Finding barcodes for {wildcards.sample} / {wildcards.sublibrary}"
+    resources:
+        mem=lambda wc, attempt: define_memory_requested(initial_value=1, attempts=attempt),
+        runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
+    threads: 8
+    params:
+        output_prefix="results/barcoded_cat/{sample}_{sublibrary}",
+        n_mismatches=CONFIG.barcode_mismatches,
+        enable_n_to_match=True,
+        trim_r2=False,
+    script:
+        "../scripts/find_barcodes.py"
+
+
+rule trim_cat:
+    input:
+        r1="results/barcoded_cat/{sample}_{sublibrary}_R1.fastq.gz",
+    output:
+        r1=temp("results/trimmed_cat/{sample}_{sublibrary}_trimmed.fq.gz"),
     log:
         "logs/trim_cat/{sample}_{sublibrary}.log",
     benchmark:
@@ -24,50 +49,19 @@ rule trim_cat:
         outdir="results/trimmed_cat/",
     shell:
         """
-        trim_galore --poly_g -j {threads} --trim-n --2colour 20 --nextera --paired \
+        trim_galore --poly_g -j {threads} --2colour 20 --nextera \
           --basename {wildcards.sample}_{wildcards.sublibrary} \
           --output_dir {params.outdir} \
-          {input.r1} {input.r2} \
+          {input.r1} \
           > {log} 2>&1
         """
 
 
-rule find_barcodes:
-    input:
-        r1="results/trimmed_cat/{sample}_{sublibrary}_val_1.fq.gz",
-        r2="results/trimmed_cat/{sample}_{sublibrary}_val_2.fq.gz",
-        barcodes=get_barcode_csv,
-    output:
-        r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
-        r2="results/barcoded/{sample}_{sublibrary}_R2.fastq.gz",
-    log:
-        "logs/find_barcodes/{sample}_{sublibrary}.log",
-    benchmark:
-        "benchmarks/find_barcodes/{sample}_{sublibrary}.tsv"
-    message:
-        "Finding barcodes for {wildcards.sample} / {wildcards.sublibrary}"
-    container:
-        CONFIG.scnado_container
-    resources:
-        mem=lambda wc, attempt: define_memory_requested(initial_value=1, attempts=attempt),
-        runtime=lambda wc, attempt: define_time_requested(initial_value=4, attempts=attempt),
-    threads: 8
-    shell:
-        "scnado find-barcodes "
-        "--r1 {input.r1} "
-        "--r2 {input.r2} "
-        "--barcodes {input.barcodes} "
-        "--output-prefix results/barcoded/{wildcards.sample}_{wildcards.sublibrary} "
-        "--n-missmatches {CONFIG.barcode_mismatches} "
-        "--enable-n-to-match "
-        "> {log} 2>&1"
-
-
 rule align_cat:
     input:
-        r1="results/barcoded/{sample}_{sublibrary}_R1.fastq.gz",
+        r1="results/trimmed_cat/{sample}_{sublibrary}_trimmed.fq.gz",
     output:
-        bam="results/aligned_cat/{sample}_{sublibrary}.bam",
+        bam=temp("results/aligned_cat/{sample}_{sublibrary}.bam"),
     log:
         "logs/align_cat/{sample}_{sublibrary}.log",
     benchmark:
@@ -95,26 +89,23 @@ rule make_fragments:
     input:
         bam="results/aligned_cat/{sample}_{sublibrary}.bam",
     output:
-        fragments="results/fragments/{sample}_{sublibrary}_fragments.tsv.gz",
+        fragments=temp("results/fragments/{sample}_{sublibrary}_fragments.tsv.gz"),
     log:
         "logs/make_fragments/{sample}_{sublibrary}.log",
     benchmark:
         "benchmarks/make_fragments/{sample}_{sublibrary}.tsv"
     message:
         "Extracting fragments for {wildcards.sample} / {wildcards.sublibrary}"
-    container:
-        CONFIG.scnado_container
     resources:
         mem=lambda wc, attempt: define_memory_requested(initial_value=6, attempts=attempt),
         runtime=lambda wc, attempt: define_time_requested(initial_value=1, attempts=attempt),
-    shell:
-        "scnado fragments "
-        "--bam {input.bam} "
-        "--output {output.fragments} "
-        r"--barcode-regex '^[^|]+\|(?P<barcode>[ACGT-]+)\|' "
-        r"--umi-regex '|(?P<UMI>[ATGC]+)$' "
-        "--shift-plus 4 --shift-minus -5 "
-        "> {log} 2>&1"
+    params:
+        barcode_regex=r"^[^|]+\|(?P<barcode>[ACGT-]+)\|",
+        umi_regex=r"|(?P<UMI>[ATGC]+)$",
+        shift_plus=4,
+        shift_minus=-5,
+    script:
+        "../scripts/make_fragments.py"
 
 
 rule process_cat:

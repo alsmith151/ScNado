@@ -15,7 +15,7 @@ mod python_bindings {
         Python::attach(|py| py.check_signals().map_err(|e| anyhow::anyhow!(e)))
     }
 
-    #[pyfunction]
+    #[pyfunction(signature = (r1, r2, barcodes, output_prefix, n_missmatches, enable_n_to_match, trim_r2 = true))]
     pub fn find_barcodes(
         r1: String,
         r2: String,
@@ -23,6 +23,7 @@ mod python_bindings {
         output_prefix: String,
         n_missmatches: usize,
         enable_n_to_match: bool,
+        trim_r2: bool,
     ) -> PyResult<()> {
         let r1_path = PathBuf::from(r1);
         let r2_path = PathBuf::from(r2);
@@ -36,6 +37,7 @@ mod python_bindings {
             n_missmatches,
             enable_n_to_match,
             false,
+            trim_r2,
             Some(&check_signals),
         )
         .map_err(|e| PyRuntimeError::new_err(format!("Barcode finding failed: {}", e)))

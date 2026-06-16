@@ -419,6 +419,7 @@ def run(
         "-s", str(snakefile),
         "--configfile", str(config_file),
         "--cores", str(cores),
+        "--singularity-args", f"--bind {base_dir} --pwd {base_dir}",
     ]
 
     if profile:
